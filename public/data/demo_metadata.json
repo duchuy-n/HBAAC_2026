@@ -1,0 +1,14 @@
+{
+  "team_name": "FoTy",
+  "forecast_source": "D:\\Desktop\\Workspace\\competition\\2026\\HBAAC\\round2-next\\sub2\\submission_private_skuratio_g120_h50_clip0p75_1p8.csv",
+  "train_source": "D:\\Desktop\\Workspace\\competition\\2026\\HBAAC\\hbaac-round2\\train.csv",
+  "selected_submission": "submission_private_skuratio_g120_h50_clip0p75_1p8.csv",
+  "public_score": 0.48498,
+  "private_score": 0.52425,
+  "public_rank": 2,
+  "private_rank": 4,
+  "lead_time_days_assumed": 7,
+  "safety_stock_days_assumed": 7,
+  "inventory_note": "current_stock_assumed is simulated for product demo because contest data has no real inventory/WMS table.",
+  "impact_note": "revenue/profit impact is a proxy derived from forecast quantity and historical sales/cost fields."
+}
