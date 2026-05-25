@@ -623,8 +623,15 @@ function ForecastDetail({ data }) {
   const savedSku = sessionStorage.getItem("selectedSku");
   const [sku, setSku] = React.useState(summary.some((row) => row.sku_id === savedSku) ? savedSku : top[0]?.sku_id);
   const [chartView, setChartView] = React.useState("post");
+  const [comparePeers, setComparePeers] = React.useState(() => top.slice(1, 3).map((item) => item.sku_id));
   const row = summary.find((r) => r.sku_id === sku) || top[0];
   const skuOptions = row && !top.some((item) => item.sku_id === row.sku_id) ? [row, ...top] : top;
+  const availableCompareSkus = skuOptions.filter((item) => item.sku_id !== sku);
+  const compareRows = [sku, ...comparePeers]
+    .filter(Boolean)
+    .filter((item, index, arr) => arr.indexOf(item) === index)
+    .map((id) => summary.find((item) => item.sku_id === id))
+    .filter(Boolean);
   const skuForecast = forecast.filter((r) => r.sku_id === sku && r.horizon_day <= 28).sort((a, b) => a.horizon_day - b.horizon_day);
   const skuNumeric = Number(String(sku || "").replace(/\D/g, "")) || 0;
   const phase = skuNumeric % 7;
@@ -655,6 +662,25 @@ function ForecastDetail({ data }) {
     },
   }[chartView];
 
+  const selectSku = (nextSku) => {
+    const normalized = String(nextSku || "").trim().toUpperCase();
+    if (!summary.some((item) => item.sku_id === normalized)) return;
+    setSku(normalized);
+    sessionStorage.setItem("selectedSku", normalized);
+    window.dispatchEvent(new CustomEvent("sku-search", { detail: normalized }));
+  };
+
+  React.useEffect(() => {
+    setComparePeers((previous) => {
+      const availableIds = availableCompareSkus.map((item) => item.sku_id);
+      const next = previous.filter((id) => id !== sku && availableIds.includes(id));
+      availableIds.forEach((id) => {
+        if (next.length < 2 && !next.includes(id)) next.push(id);
+      });
+      return next.slice(0, 2);
+    });
+  }, [sku]);
+
   React.useEffect(() => {
     const onSkuSearch = (event) => {
       const nextSku = String(event.detail || "").trim().toUpperCase();
@@ -672,7 +698,7 @@ function ForecastDetail({ data }) {
       <Card title="SKU Workspace" tag="drilldown">
         <div className="filterRow twoCols">
           <label>SKU workspace<select><option>Commercial priority</option><option>Stockout risk</option><option>Overstock risk</option></select></label>
-          <label>Selected SKU<select value={sku} onChange={(e) => setSku(e.target.value)}>{skuOptions.map((r) => <option key={r.sku_id}>{r.sku_id}</option>)}</select></label>
+          <label>Selected SKU<select value={sku} onChange={(e) => selectSku(e.target.value)}>{skuOptions.map((r) => <option key={r.sku_id}>{r.sku_id}</option>)}</select></label>
         </div>
       </Card>
       <div className="kpiGrid five">
@@ -704,7 +730,60 @@ function ForecastDetail({ data }) {
         </div>
         <p className="note">{chartConfig.note}</p>
       </Card>
+      <Card title="SKU Compare Mode" tag="priority comparison">
+        <div className="compareControls">
+          <label>Primary SKU<input value={sku} readOnly /></label>
+          {[0, 1].map((index) => (
+            <label key={index}>Compare SKU {index + 1}
+              <select value={comparePeers[index] || ""} onChange={(event) => {
+                const next = [...comparePeers];
+                next[index] = event.target.value;
+                setComparePeers(next);
+              }}>
+                {availableCompareSkus.map((item) => <option key={item.sku_id}>{item.sku_id}</option>)}
+              </select>
+            </label>
+          ))}
+        </div>
+        <div className="compareGrid">
+          {compareRows.map((item, index) => (
+            <div className={`compareCard ${item.sku_id === sku ? "primary" : ""}`} key={item.sku_id}>
+              <div className="compareTitle">
+                <span>{item.sku_id === sku ? "Primary" : `Peer ${index}`}</span>
+                <strong>{item.sku_id}</strong>
+              </div>
+              <div className="compareMetrics">
+                <CompareMetric label="28D Demand" value={number(item.forecast_28d_qty, 1)} max={Math.max(...compareRows.map((r) => Number(r.forecast_28d_qty || 0)), 1)} raw={item.forecast_28d_qty} />
+                <CompareMetric label="Revenue" value={money(item.forecast_28d_revenue)} max={Math.max(...compareRows.map((r) => Number(r.forecast_28d_revenue || 0)), 1)} raw={item.forecast_28d_revenue} tone="green" />
+                <CompareMetric label="Profit Proxy" value={money(item.forecast_28d_profit)} max={Math.max(...compareRows.map((r) => Number(r.forecast_28d_profit || 0)), 1)} raw={item.forecast_28d_profit} tone="green" />
+                <CompareMetric label="Demand Change" value={`${number(item.demand_change_pct, 1)}%`} max={Math.max(...compareRows.map((r) => Math.abs(Number(r.demand_change_pct || 0))), 1)} raw={Math.abs(Number(item.demand_change_pct || 0))} tone="amber" />
+                <CompareMetric label="Suggested Order" value={number(item.suggested_order_qty, 1)} max={Math.max(...compareRows.map((r) => Number(r.suggested_order_qty || 0)), 1)} raw={item.suggested_order_qty} tone="red" />
+              </div>
+              <button type="button" className="compareDrillButton" onClick={() => goToSkuDetail(item.sku_id)}>Open SKU Detail</button>
+            </div>
+          ))}
+        </div>
+        <DataTable rows={compareRows} limit={compareRows.length} onRowClick={(item) => goToSkuDetail(item.sku_id)} columns={[
+          { key: "sku_id", label: "SKU" },
+          { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
+          { key: "forecast_28d_revenue", label: "Revenue", render: money },
+          { key: "forecast_28d_profit", label: "Profit Proxy", render: money },
+          { key: "demand_change_pct", label: "Demand Change", render: (v) => `${number(v, 1)}%` },
+          { key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) },
+          { key: "risk_type", label: "Risk Signal", render: (v) => <RiskBadge type={v} /> },
+        ]} />
+      </Card>
     </>
+  );
+}
+
+function CompareMetric({ label, value, raw, max, tone = "cyan" }) {
+  const width = Math.max(4, Math.min(100, (Number(raw || 0) / Math.max(Number(max || 1), 1)) * 100));
+  return (
+    <div className={`compareMetric ${tone}`}>
+      <div><span>{label}</span><strong>{value}</strong></div>
+      <i><b style={{ width: `${width}%` }} /></i>
+    </div>
   );
 }
 
@@ -1199,6 +1278,17 @@ function FloatingCopilot({ data, setActive }) {
     if (cleaned) setSubmitted(cleaned);
   };
 
+  const runQuickAction = (target) => {
+    const firstSku = answer?.rows?.find((row) => row.sku_id)?.sku_id || selectedSku;
+    if (target === "detail" && firstSku) {
+      setOpen(false);
+      goToSkuDetail(firstSku);
+      return;
+    }
+    setOpen(false);
+    setActive(target);
+  };
+
   const openWorkspace = () => {
     setOpen(false);
     setActive("agent");
@@ -1236,6 +1326,11 @@ function FloatingCopilot({ data, setActive }) {
                   ) : null}
                   <div className="miniActions">
                     {answer.actions.slice(0, 3).map((item) => <em key={item}>{item}</em>)}
+                  </div>
+                  <div className="aiQuickActions">
+                    <button type="button" onClick={() => runQuickAction("detail")}>Open SKU Detail</button>
+                    <button type="button" onClick={() => runQuickAction("risk")}>View Risk Queue</button>
+                    <button type="button" onClick={() => runQuickAction("scenario")}>Run Scenario</button>
                   </div>
                   <DataTable rows={answer.rows} limit={5} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={answer.columns} />
                   {answer.note ? <p className="agentNote">{answer.note}</p> : null}

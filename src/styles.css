@@ -325,6 +325,107 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
   white-space: nowrap;
 }
 
+.compareControls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.compareControls input[readonly] {
+  background: #f8fafc;
+  color: var(--primary);
+  font-weight: 950;
+}
+.compareGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+.compareCard {
+  border: 1px solid #d8e7ec;
+  border-radius: 18px;
+  padding: 15px;
+  background: linear-gradient(180deg, #ffffff, #f8fafc);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, .055);
+}
+.compareCard.primary {
+  border-color: #8bd8e8;
+  background: linear-gradient(180deg, #effbfe, #ffffff);
+}
+.compareTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 13px;
+}
+.compareTitle span {
+  color: var(--cyan);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: 10px;
+  font-weight: 950;
+}
+.compareTitle strong {
+  font-size: 17px;
+  color: var(--text);
+}
+.compareMetrics {
+  display: grid;
+  gap: 10px;
+}
+.compareMetric div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.compareMetric span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+.compareMetric strong {
+  color: var(--text);
+  font-size: 13px;
+  text-align: right;
+}
+.compareMetric i {
+  display: block;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #edf4f6;
+}
+.compareMetric b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyan), #7dd3fc);
+}
+.compareMetric.green b {
+  background: linear-gradient(90deg, #10b981, #86efac);
+}
+.compareMetric.amber b {
+  background: linear-gradient(90deg, #f59e0b, #fde68a);
+}
+.compareMetric.red b {
+  background: linear-gradient(90deg, #ef4444, #fca5a5);
+}
+.compareDrillButton {
+  width: 100%;
+  height: 38px;
+  margin-top: 13px;
+  border: 1px solid #bae6fd;
+  border-radius: 13px;
+  color: var(--primary);
+  background: #e8f7fb;
+  font-weight: 950;
+  cursor: pointer;
+}
+
 .agentGrid { display:grid; grid-template-columns: minmax(320px, .42fr) minmax(0, .58fr); gap: 18px; }
 .copilotHero { display:flex; gap: 14px; align-items: center; color: #fff; border-radius: 18px; padding: 18px; background: linear-gradient(135deg, var(--primary), var(--cyan)); margin-bottom: 16px; }
 .copilotHero strong { font-size: 20px; }
@@ -659,6 +760,28 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
   font-size: 11px;
   font-weight: 900;
 }
+.aiQuickActions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.aiQuickActions button {
+  min-height: 38px;
+  border: 1px solid #bae6fd;
+  border-radius: 12px;
+  color: var(--primary);
+  background: #ffffff;
+  font-size: 11px;
+  font-weight: 950;
+  cursor: pointer;
+  transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+}
+.aiQuickActions button:hover {
+  transform: translateY(-1px);
+  background: #e8f7fb;
+  box-shadow: 0 10px 20px rgba(2, 132, 199, .10);
+}
 .copilotInputRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 46px;
@@ -776,7 +899,9 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
   .kpiGrid.four {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .filterRow {
+  .filterRow,
+  .compareControls,
+  .compareGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .demoDock {
@@ -798,6 +923,8 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
   .kpiGrid.four,
   .filterRow,
   .filterRow.twoCols,
+  .compareControls,
+  .compareGrid,
   .smallMetricRow,
   .deltaGrid,
   .miniMetricRow,
@@ -842,6 +969,9 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
   .copilotLauncher span {
     right: -8px;
     top: -8px;
+  }
+  .aiQuickActions {
+    grid-template-columns: 1fr;
   }
   .demoDock { display: none; }
 }
