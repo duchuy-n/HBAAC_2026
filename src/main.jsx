@@ -111,6 +111,47 @@ const actionLabel = {
   Monitor: "Monitor",
 };
 
+function goToSkuDetail(skuId) {
+  if (!skuId) return;
+  const sku = String(skuId).trim().toUpperCase();
+  sessionStorage.setItem("selectedSku", sku);
+  window.dispatchEvent(new CustomEvent("sku-search", { detail: sku }));
+  window.location.hash = "detail";
+}
+
+function severityFor(row) {
+  const riskScore = Number(row.risk_score || 0);
+  const profit = Number(row.profit_at_risk_proxy || 0);
+  if (row.risk_type === "Overstock risk") return "Overstock";
+  if (riskScore >= 35 || profit >= 1_500_000) return "Critical";
+  if (riskScore >= 20 || profit >= 500_000) return "High";
+  return row.risk_type === "Healthy" ? "Watchlist" : "Watchlist";
+}
+
+function briefText({ title, rows, metrics = [] }) {
+  const lines = [
+    title,
+    "",
+    ...metrics.map((item) => `${item.label}: ${item.value}`),
+    "",
+    "Priority actions:",
+    ...rows.slice(0, 8).map((row, index) => `${index + 1}. ${row.sku_id} | ${severityFor(row)} | ${row.risk_type || "Priority"} | Profit at risk ${money(row.profit_at_risk_proxy || row.forecast_28d_profit || 0)} | ${actionLabel[row.recommended_action] || row.recommended_action || "Monitor and review replenishment plan"}`),
+    "",
+    "Decision note: forecast is model output; inventory, lead time, stockout and overstock signals are scenario assumptions for decision support.",
+  ];
+  return lines.join("\n");
+}
+
+function downloadText(filename, content) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function Sidebar({ active, setActive, summary, risk, forecast }) {
   return (
     <aside className="sidebar">
@@ -319,7 +360,7 @@ function DonutChart({ stockout, overstock }) {
   );
 }
 
-function DataTable({ rows, columns, limit = 10 }) {
+function DataTable({ rows, columns, limit = 10, onRowClick }) {
   return (
     <div className="tableWrap">
       <table>
@@ -330,7 +371,11 @@ function DataTable({ rows, columns, limit = 10 }) {
         </thead>
         <tbody>
           {rows.slice(0, limit).map((row, index) => (
-            <tr key={`${row.sku_id || index}-${index}`}>
+            <tr
+              key={`${row.sku_id || index}-${index}`}
+              className={onRowClick ? "clickableRow" : ""}
+              onClick={() => onRowClick?.(row)}
+            >
               {columns.map((col) => (
                 <td key={col.key}>{col.render ? col.render(row[col.key], row) : row[col.key]}</td>
               ))}
@@ -345,6 +390,26 @@ function DataTable({ rows, columns, limit = 10 }) {
 function RiskBadge({ type }) {
   const cls = type === "Stockout risk" ? "stockout" : type === "Overstock risk" ? "overstock" : "healthy";
   return <span className={`riskBadge ${cls}`}>{riskLabel[type] || type}</span>;
+}
+
+function SeverityBadge({ row }) {
+  const severity = severityFor(row);
+  const cls = severity.toLowerCase();
+  return <span className={`severityBadge ${cls}`}>{severity}</span>;
+}
+
+function DecisionBrief({ title, rows, metrics, filename = "decision-brief.txt" }) {
+  const text = briefText({ title, rows, metrics });
+  return (
+    <div className="decisionBrief">
+      <div>
+        <span>Executive decision brief</span>
+        <strong>{title}</strong>
+        <p>Creates a concise operating brief for replenishment, risk review, and commercial follow-up.</p>
+      </div>
+      <button type="button" className="primaryButton" onClick={() => downloadText(filename, text)}>Download Brief</button>
+    </div>
+  );
 }
 
 function Dashboard({ data }) {
@@ -391,7 +456,7 @@ function Dashboard({ data }) {
       </div>
       <div className="grid two">
         <Card title="Top SKUs by Profit Proxy" tag="commercial priority">
-          <DataTable rows={topProfit} limit={7} columns={[
+          <DataTable rows={topProfit} limit={7} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
             { key: "sku_id", label: "SKU" },
             { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
             { key: "forecast_28d_revenue", label: "Revenue", render: money },
@@ -403,8 +468,19 @@ function Dashboard({ data }) {
         </Card>
       </div>
       <Card title="Priority Action Queue" tag="highest value at risk">
-        <DataTable rows={actionQueue} limit={8} columns={[
+        <DecisionBrief
+          title="28-day replenishment priority"
+          rows={actionQueue}
+          filename="autoparts-priority-brief.txt"
+          metrics={[
+            { label: "Stockout-risk SKUs", value: number(stockout.length) },
+            { label: "Overstock-risk SKUs", value: number(overstock.length) },
+            { label: "Forecast revenue", value: money(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0)) },
+          ]}
+        />
+        <DataTable rows={actionQueue} limit={8} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
           { key: "sku_id", label: "SKU" },
+          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
           { key: "risk_type", label: "Risk Type", render: (v) => <RiskBadge type={v} /> },
           { key: "revenue_at_risk_proxy", label: "Revenue at Risk", render: money },
           { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
@@ -513,8 +589,9 @@ function RiskMonitor({ data }) {
         <KpiCard icon={Gauge} label="Avg. risk score" value={number(avgRisk, 1)} sub="Scale 0-100" tone="teal" />
       </div>
       <Card title="Risk Table">
-        <DataTable rows={filtered} limit={filtered.length} columns={[
+        <DataTable rows={filtered} limit={filtered.length} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
           { key: "sku_id", label: "SKU" },
+          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
           { key: "risk_type", label: "Alert Group", render: (v) => <RiskBadge type={v} /> },
           { key: "risk_score", label: "Risk Score", render: (v) => <RiskScore value={v} /> },
           { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
@@ -534,7 +611,7 @@ function RiskScore({ value }) {
 }
 
 function ForecastDetail({ data }) {
-  const { summary, forecast, actuals } = data;
+  const { summary, forecast } = data;
   const top = [...summary].sort((a, b) => b.forecast_28d_profit - a.forecast_28d_profit).slice(0, 100);
   const savedSku = sessionStorage.getItem("selectedSku");
   const [sku, setSku] = React.useState(summary.some((row) => row.sku_id === savedSku) ? savedSku : top[0]?.sku_id);
@@ -542,7 +619,6 @@ function ForecastDetail({ data }) {
   const row = summary.find((r) => r.sku_id === sku) || top[0];
   const skuOptions = row && !top.some((item) => item.sku_id === row.sku_id) ? [row, ...top] : top;
   const skuForecast = forecast.filter((r) => r.sku_id === sku && r.horizon_day <= 28).sort((a, b) => a.horizon_day - b.horizon_day);
-  const skuActuals = actuals.filter((r) => r.sku_id === sku).slice(-28);
   const skuNumeric = Number(String(sku || "").replace(/\D/g, "")) || 0;
   const phase = skuNumeric % 7;
   const simulatedRows = skuForecast.map((r, index) => {
@@ -552,17 +628,6 @@ function ForecastDetail({ data }) {
     return { date: r.date, value: Math.max(0, Number(r.forecast_qty || 0) * drift * wave * pulse) };
   });
   const forecastRows = skuForecast.map((r) => ({ date: r.date, value: r.forecast_qty }));
-  const actualRows = skuActuals.map((r) => ({ date: r.date, value: r.actual_qty }));
-  const actualLast14 = actualRows.slice(-14);
-  const calendarLabels = [...actualLast14.map((point) => point.date), ...forecastRows.map((point) => point.date)];
-  const calendarActualRows = calendarLabels.map((date, index) => ({
-    date,
-    value: index < actualLast14.length ? actualLast14[index].value : null,
-  }));
-  const calendarForecastRows = calendarLabels.map((date, index) => ({
-    date,
-    value: index >= actualLast14.length ? forecastRows[index - actualLast14.length]?.value : null,
-  }));
   const chartConfig = {
     post: {
       title: "Post-train Forecast vs Simulated Market",
@@ -579,15 +644,6 @@ function ForecastDetail({ data }) {
       note: "This view shows only the model output for the next 28 days after the train period. No historical actual sales are overlaid on future dates.",
       series: [
         { name: "Forecast", color: "#075985", points: forecastRows },
-      ],
-    },
-    calendar: {
-      title: "Historical Actuals to Future Forecast",
-      tag: "history to forecast",
-      note: "Actual sales are shown only before the forecast window. Forecast starts after the train period, so the two lines are consecutive in time rather than the same dates.",
-      series: [
-        { name: "Recent actual sales", color: "#0891B2", points: calendarActualRows },
-        { name: "Forecast", color: "#075985", points: calendarForecastRows },
       ],
     },
   }[chartView];
@@ -620,6 +676,16 @@ function ForecastDetail({ data }) {
         <KpiCard icon={BarChart3} label="Profit Proxy" value={money(row.forecast_28d_profit)} sub="Financial impact" tone="red" />
       </div>
       <Card title={chartConfig.title} tag={chartConfig.tag} className="heroChartCard">
+        <DecisionBrief
+          title={`${sku} replenishment decision`}
+          rows={[{ ...row, sku_id: sku, risk_type: row.forecast_28d_qty > row.last_28d_qty ? "Stockout risk" : "Watchlist", profit_at_risk_proxy: row.forecast_28d_profit, recommended_action: "Prioritize replenishment and confirm supplier availability" }]}
+          filename={`${sku}-decision-brief.txt`}
+          metrics={[
+            { label: "28D forecast demand", value: number(row.forecast_28d_qty, 1) },
+            { label: "Estimated revenue", value: money(row.forecast_28d_revenue) },
+            { label: "Profit proxy", value: money(row.forecast_28d_profit) },
+          ]}
+        />
         <ForecastChart
           height={470}
           yLabel="Daily quantity"
@@ -628,7 +694,6 @@ function ForecastDetail({ data }) {
         <div className="segmented">
           <button type="button" className={chartView === "post" ? "active" : ""} onClick={() => setChartView("post")}>Future forecast vs simulated data</button>
           <button type="button" className={chartView === "forecastOnly" ? "active" : ""} onClick={() => setChartView("forecastOnly")}>Forecast only</button>
-          <button type="button" className={chartView === "calendar" ? "active" : ""} onClick={() => setChartView("calendar")}>Historical to forecast</button>
         </div>
         <p className="note">{chartConfig.note}</p>
       </Card>
@@ -638,24 +703,21 @@ function ForecastDetail({ data }) {
 
 function Agent({ data }) {
   const { summary, risk } = data;
-  const questions = [
-    "What are the top 10 SKUs to prioritize for replenishment?",
-    "Which SKUs are at risk of stockout in the next 28 days?",
-    "Which SKUs have the highest profit proxy?",
-    "Which SKUs should be prioritized if lead time is 14 days?",
-  ];
-  const [question, setQuestion] = React.useState(questions[0]);
+  const [question, setQuestion] = React.useState("");
   const [submitted, setSubmitted] = React.useState("");
   const answer = React.useMemo(() => buildAgentAnswer(submitted, summary, risk), [submitted, summary, risk]);
+  const runAnalysis = () => {
+    const cleaned = question.trim();
+    if (cleaned) setSubmitted(cleaned);
+  };
   return (
     <>
       <TopHeader pageTitle="Recommendation Agent" subtitle="Rule-based Q&A over prepared CSV tables, designed for controlled presentation without fabricated data." />
       <div className="agentGrid">
-        <Card title="Decision Copilot" tag="CSV-grounded">
-          <div className="copilotHero"><Bot size={34} /><div><strong>AI Decision Copilot</strong><p>Ask about sales, inventory, forecast, and priority actions.</p></div></div>
-          <label className="stackLabel">Sample questions<select value={question} onChange={(e) => setQuestion(e.target.value)}>{questions.map((q) => <option key={q}>{q}</option>)}</select></label>
-          <label className="stackLabel">Ask a question<input value={question} onChange={(e) => setQuestion(e.target.value)} /></label>
-          <button className="primaryButton" onClick={() => setSubmitted(question)}>Run Analysis</button>
+        <Card title="Decision Copilot" tag="operator console">
+          <div className="copilotHero"><Bot size={34} /><div><strong>AI Decision Copilot</strong><p>Type a business question and convert forecast output into an operating brief.</p></div></div>
+          <label className="stackLabel">Ask a question<input value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") runAnalysis(); }} placeholder="Ask about replenishment, stockout risk, profit priority, or this week's actions..." /></label>
+          <button className="primaryButton" onClick={runAnalysis}>Run Analysis</button>
           <div className="smallMetricRow">
             <ScopeMetric label="Forecast revenue" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0))} />
             <ScopeMetric label="Profit proxy" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_profit, 0))} />
@@ -663,17 +725,15 @@ function Agent({ data }) {
         </Card>
         <Card title={submitted ? "Answer / Recommendation Result" : "Ready to run analysis"} tag={submitted ? "decision brief" : "empty state"}>
           {!submitted ? (
-            <div className="emptyState"><Bot size={46} /><strong>Ready to run analysis</strong><p>Select a question and run analysis. Results will stay grounded in prepared CSV tables.</p></div>
+            <div className="emptyState"><Bot size={46} /><strong>Ready to run analysis</strong><p>Type a question and run analysis. The response will be framed as an operating brief.</p></div>
           ) : (
             <div className="answerPane">
               <div className="questionBubble">{submitted}</div>
               <h3>{answer.summary}</h3>
-              <div className="supportingMetrics">
-                <span>Source: sku_risk_table.csv</span>
-                <span>Source: sku_forecast_summary.csv</span>
-                <span>Decision-support</span>
+              <div className="briefActions">
+                {answer.actions.map((item) => <span key={item}>{item}</span>)}
               </div>
-              <DataTable rows={answer.rows} limit={10} columns={answer.columns} />
+              <DataTable rows={answer.rows} limit={10} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={answer.columns} />
             </div>
           )}
         </Card>
@@ -687,10 +747,12 @@ function buildAgentAnswer(question, summary, risk) {
   const q = question.toLowerCase();
   if (q.includes("profit")) {
     return {
-      summary: "These SKUs carry the highest 28-day profit proxy and should be monitored as commercial priorities.",
+      summary: "Commercial priority brief: these SKUs carry the strongest 28-day profit proxy and should be protected first when supply or logistics capacity is constrained.",
+      actions: ["Protect availability", "Review supplier coverage", "Prioritize high-margin SKUs"],
       rows: [...summary].sort((a, b) => b.forecast_28d_profit - a.forecast_28d_profit).slice(0, 10),
       columns: [
         { key: "sku_id", label: "SKU" },
+        { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={{ ...row, risk_type: "Stockout risk", profit_at_risk_proxy: row.forecast_28d_profit }} /> },
         { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
         { key: "forecast_28d_revenue", label: "Revenue", render: money },
         { key: "forecast_28d_profit", label: "Profit Proxy", render: money },
@@ -699,10 +761,12 @@ function buildAgentAnswer(question, summary, risk) {
   }
   const rows = risk.filter((r) => r.risk_type === "Stockout risk").sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy).slice(0, 10);
   return {
-    summary: "The replenishment priority queue is led by SKUs with the highest profit proxy at risk, cross-checked with risk score.",
+    summary: "Replenishment command brief: prioritize SKUs where forecast demand, risk score, and profit exposure point to meaningful stockout impact.",
+    actions: ["Prepare replenishment review", "Confirm supplier availability", "Escalate critical SKUs"],
     rows,
     columns: [
       { key: "sku_id", label: "SKU" },
+      { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
       { key: "risk_score", label: "Risk Score", render: (v) => number(v, 1) },
       { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
       { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
@@ -716,9 +780,20 @@ function Scenario({ data }) {
   const [lead, setLead] = React.useState(7);
   const [safety, setSafety] = React.useState(7);
   const [uplift, setUplift] = React.useState(0);
+  const baselineRows = React.useMemo(() => calculateScenario(summary, 7, 7, 0), [summary]);
   const rows = React.useMemo(() => calculateScenario(summary, lead, safety, uplift), [summary, lead, safety, uplift]);
   const stockout = rows.filter((r) => r.risk_type === "Stockout risk");
   const overstock = rows.filter((r) => r.risk_type === "Overstock risk");
+  const baseStockout = baselineRows.filter((r) => r.risk_type === "Stockout risk");
+  const baseOverstock = baselineRows.filter((r) => r.risk_type === "Overstock risk");
+  const revenueAtRisk = stockout.reduce((s, r) => s + r.revenue_at_risk_proxy, 0);
+  const profitAtRisk = stockout.reduce((s, r) => s + r.profit_at_risk_proxy, 0);
+  const baseRevenueAtRisk = baseStockout.reduce((s, r) => s + r.revenue_at_risk_proxy, 0);
+  const baseProfitAtRisk = baseStockout.reduce((s, r) => s + r.profit_at_risk_proxy, 0);
+  const newlyCritical = rows
+    .filter((row) => row.risk_type === "Stockout risk" && !baseStockout.some((base) => base.sku_id === row.sku_id))
+    .sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy)
+    .slice(0, 8);
   return (
     <>
       <TopHeader pageTitle="Scenario Simulator" subtitle="Estimate the operational impact of lead time, safety stock, and demand uplift assumptions." />
@@ -733,14 +808,30 @@ function Scenario({ data }) {
         </Card>
       </div>
       <div className="kpiGrid four">
-        <KpiCard icon={AlertTriangle} label="Stockout-risk SKUs" value={number(stockout.length)} sub="Scenario result" tone="red" />
-        <KpiCard icon={PackageSearch} label="Overstock-risk SKUs" value={number(overstock.length)} sub="Scenario result" tone="purple" />
-        <KpiCard icon={DollarSign} label="Revenue at Risk" value={money(stockout.reduce((s, r) => s + r.revenue_at_risk_proxy, 0))} sub="Scenario result" tone="green" />
-        <KpiCard icon={BarChart3} label="Profit Proxy at Risk" value={money(stockout.reduce((s, r) => s + r.profit_at_risk_proxy, 0))} sub="Scenario result" tone="amber" />
+        <KpiCard icon={AlertTriangle} label="Stockout-risk SKUs" value={number(stockout.length)} sub={`${stockout.length - baseStockout.length >= 0 ? "+" : ""}${number(stockout.length - baseStockout.length)} vs baseline`} tone="red" />
+        <KpiCard icon={PackageSearch} label="Overstock-risk SKUs" value={number(overstock.length)} sub={`${overstock.length - baseOverstock.length >= 0 ? "+" : ""}${number(overstock.length - baseOverstock.length)} vs baseline`} tone="purple" />
+        <KpiCard icon={DollarSign} label="Revenue at Risk" value={money(revenueAtRisk)} sub={`${money(revenueAtRisk - baseRevenueAtRisk)} delta`} tone="green" />
+        <KpiCard icon={BarChart3} label="Profit Proxy at Risk" value={money(profitAtRisk)} sub={`${money(profitAtRisk - baseProfitAtRisk)} delta`} tone="amber" />
       </div>
-      <Card title="Scenario Result Table">
-        <DataTable rows={rows.filter((r) => r.risk_type !== "Healthy").sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy)} limit={25} columns={[
+      <Card title="Scenario Delta View" tag="baseline: 7D lead, 7D safety">
+        <div className="deltaGrid">
+          <DeltaTile label="Stockout delta" value={`${stockout.length - baseStockout.length >= 0 ? "+" : ""}${number(stockout.length - baseStockout.length)}`} />
+          <DeltaTile label="Revenue at risk delta" value={money(revenueAtRisk - baseRevenueAtRisk)} />
+          <DeltaTile label="Profit at risk delta" value={money(profitAtRisk - baseProfitAtRisk)} />
+          <DeltaTile label="Newly exposed SKUs" value={number(newlyCritical.length)} />
+        </div>
+        <DataTable rows={newlyCritical.length ? newlyCritical : stockout.sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy)} limit={8} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
           { key: "sku_id", label: "SKU" },
+          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
+          { key: "risk_score", label: "Risk Score", render: (v) => number(v, 1) },
+          { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
+          { key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) },
+        ]} />
+      </Card>
+      <Card title="Scenario Result Table">
+        <DataTable rows={rows.filter((r) => r.risk_type !== "Healthy").sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy)} limit={25} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
+          { key: "sku_id", label: "SKU" },
+          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
           { key: "risk_type", label: "Alert Group", render: (v) => <RiskBadge type={v} /> },
           { key: "risk_score", label: "Risk Score", render: (v) => number(v, 1) },
           { key: "scenario_forecast_28d_qty", label: "Scenario Demand", render: (v) => number(v, 1) },
@@ -755,6 +846,15 @@ function Scenario({ data }) {
 
 function Slider({ label, value, setValue, min, max }) {
   return <label className="sliderLabel"><span>{label}<strong>{value}</strong></span><input type="range" min={min} max={max} value={value} onChange={(e) => setValue(Number(e.target.value))} /></label>;
+}
+
+function DeltaTile({ label, value }) {
+  return (
+    <div className="deltaTile">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
 }
 
 function calculateScenario(summary, lead, safety, uplift) {
