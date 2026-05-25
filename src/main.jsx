@@ -97,6 +97,14 @@ const pages = [
   { key: "scenario", label: "Scenario Simulator", icon: Settings2 },
 ];
 
+const demoSteps = [
+  { key: "dashboard", title: "Control Tower", line: "Start with operating KPIs and the priority action queue." },
+  { key: "risk", title: "Risk Monitor", line: "Rank SKUs by stockout, overstock, and financial exposure." },
+  { key: "detail", title: "SKU Drilldown", line: "Inspect one SKU forecast and its revenue/profit impact." },
+  { key: "agent", title: "Decision Copilot", line: "Turn a business question into an operating brief." },
+  { key: "scenario", title: "Scenario Simulator", line: "Stress-test lead time, safety stock, and demand uplift." },
+];
+
 const riskLabel = {
   "Stockout risk": "Stockout risk",
   "Overstock risk": "Overstock risk",
@@ -217,16 +225,13 @@ function TopHeader({ pageTitle, subtitle }) {
             <Search size={16} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search SKU, product, warehouse..." />
           </form>
-          <div className="headerFilter">Date range: Next 28D</div>
-          <div className="headerFilter">Channel: All</div>
-          <div className="headerFilter">Warehouse: All</div>
+          <div className="headerFilter">28D · All channels · All warehouses</div>
           <div className="iconButton" aria-hidden="true"><Bell size={18} /></div>
         </div>
       </div>
       <div className="headerPills">
-        <span>Batch forecast</span>
-        <span>28-day horizon</span>
-        <span>Decision support</span>
+        <span>Forecast output</span>
+        <span>Simulated inventory assumptions</span>
       </div>
     </header>
   );
@@ -436,6 +441,27 @@ function Dashboard({ data }) {
         <KpiCard icon={AlertTriangle} label="Stockout Risk" value={number(stockout.length)} sub="Action queue" tone="red" />
         <KpiCard icon={PackageSearch} label="Overstock Risk" value={number(overstock.length)} sub="Inventory control" tone="purple" />
       </div>
+      <Card title="Priority Action Queue" tag="highest value at risk" className="priorityHeroCard">
+        <DecisionBrief
+          title="28-day replenishment priority"
+          rows={actionQueue}
+          filename="autoparts-priority-brief.txt"
+          metrics={[
+            { label: "Stockout-risk SKUs", value: number(stockout.length) },
+            { label: "Overstock-risk SKUs", value: number(overstock.length) },
+            { label: "Forecast revenue", value: money(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0)) },
+          ]}
+        />
+        <DataTable rows={actionQueue} limit={8} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
+          { key: "sku_id", label: "SKU" },
+          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
+          { key: "risk_type", label: "Risk Type", render: (v) => <RiskBadge type={v} /> },
+          { key: "revenue_at_risk_proxy", label: "Revenue at Risk", render: money },
+          { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
+          { key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) },
+          { key: "recommended_action", label: "Recommended Action", render: (v) => actionLabel[v] || v },
+        ]} />
+      </Card>
       <div className="grid twoOne">
         <Card title="Demand Forecast Overview" tag="next 28 days">
           <ForecastChart
@@ -467,27 +493,6 @@ function Dashboard({ data }) {
           <AlertMix stockout={stockout.length} overstock={overstock.length} />
         </Card>
       </div>
-      <Card title="Priority Action Queue" tag="highest value at risk">
-        <DecisionBrief
-          title="28-day replenishment priority"
-          rows={actionQueue}
-          filename="autoparts-priority-brief.txt"
-          metrics={[
-            { label: "Stockout-risk SKUs", value: number(stockout.length) },
-            { label: "Overstock-risk SKUs", value: number(overstock.length) },
-            { label: "Forecast revenue", value: money(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0)) },
-          ]}
-        />
-        <DataTable rows={actionQueue} limit={8} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
-          { key: "sku_id", label: "SKU" },
-          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
-          { key: "risk_type", label: "Risk Type", render: (v) => <RiskBadge type={v} /> },
-          { key: "revenue_at_risk_proxy", label: "Revenue at Risk", render: money },
-          { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
-          { key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) },
-          { key: "recommended_action", label: "Recommended Action", render: (v) => actionLabel[v] || v },
-        ]} />
-      </Card>
     </>
   );
 }
@@ -705,7 +710,21 @@ function Agent({ data }) {
   const { summary, risk } = data;
   const [question, setQuestion] = React.useState("");
   const [submitted, setSubmitted] = React.useState("");
-  const answer = React.useMemo(() => buildAgentAnswer(submitted, summary, risk), [submitted, summary, risk]);
+  const [selectedSku, setSelectedSku] = React.useState(sessionStorage.getItem("selectedSku") || "");
+  const contextRow = summary.find((row) => row.sku_id === selectedSku);
+  const contextRisk = risk.find((row) => row.sku_id === selectedSku);
+  const answer = React.useMemo(() => buildAgentAnswer(submitted, summary, risk, selectedSku), [submitted, summary, risk, selectedSku]);
+
+  React.useEffect(() => {
+    const syncSku = (event) => setSelectedSku(String(event.detail || sessionStorage.getItem("selectedSku") || ""));
+    window.addEventListener("sku-search", syncSku);
+    window.addEventListener("storage", syncSku);
+    return () => {
+      window.removeEventListener("sku-search", syncSku);
+      window.removeEventListener("storage", syncSku);
+    };
+  }, []);
+
   const runAnalysis = () => {
     const cleaned = question.trim();
     if (cleaned) setSubmitted(cleaned);
@@ -715,8 +734,15 @@ function Agent({ data }) {
       <TopHeader pageTitle="Recommendation Agent" subtitle="Rule-based Q&A over prepared CSV tables, designed for controlled presentation without fabricated data." />
       <div className="agentGrid">
         <Card title="Decision Copilot" tag="operator console">
-          <div className="copilotHero"><Bot size={34} /><div><strong>AI Decision Copilot</strong><p>Type a business question and convert forecast output into an operating brief.</p></div></div>
-          <label className="stackLabel">Ask a question<input value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") runAnalysis(); }} placeholder="Ask about replenishment, stockout risk, profit priority, or this week's actions..." /></label>
+          <div className="copilotHero"><Bot size={34} /><div><strong>AI Decision Copilot</strong><p>{contextRow ? `Current SKU context: ${selectedSku}` : "Type a business question and convert forecast output into an operating brief."}</p></div></div>
+          {contextRow ? (
+            <div className="skuContextCard">
+              <span>Selected SKU</span>
+              <strong>{selectedSku}</strong>
+              <p>{money(contextRow.forecast_28d_revenue)} revenue · {money(contextRow.forecast_28d_profit)} profit proxy · {contextRisk?.risk_type || "Commercial priority"}</p>
+            </div>
+          ) : null}
+          <label className="stackLabel">Ask a question<input value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") runAnalysis(); }} placeholder={contextRow ? `Ask what logistics should do for ${selectedSku}...` : "Ask about replenishment, stockout risk, profit priority, or this week's actions..."} /></label>
           <button className="primaryButton" onClick={runAnalysis}>Run Analysis</button>
           <div className="smallMetricRow">
             <ScopeMetric label="Forecast revenue" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0))} />
@@ -742,9 +768,40 @@ function Agent({ data }) {
   );
 }
 
-function buildAgentAnswer(question, summary, risk) {
+function buildAgentAnswer(question, summary, risk, selectedSku = "") {
   if (!question) return null;
   const q = question.toLowerCase();
+  const skuInQuestion = String(question.match(/sku-\d+/i)?.[0] || selectedSku || "").toUpperCase();
+  const skuSummary = summary.find((row) => row.sku_id === skuInQuestion);
+  const skuRisk = risk.find((row) => row.sku_id === skuInQuestion);
+  const asksGlobalList = q.includes("top") || q.includes("which skus") || q.includes("highest") || q.includes("list");
+  const asksSkuContext = q.includes(skuInQuestion.toLowerCase()) || q.includes("this") || q.includes("selected") || q.includes("current") || q.includes("sku") || (!asksGlobalList && Boolean(selectedSku));
+  if (skuSummary && asksSkuContext) {
+    const briefRow = skuRisk || {
+      ...skuSummary,
+      risk_type: "Commercial priority",
+      risk_score: Math.max(0, Number(skuSummary.demand_change_pct || 0)),
+      profit_at_risk_proxy: skuSummary.forecast_28d_profit,
+      recommended_action: "Prioritize replenishment and confirm supplier availability",
+    };
+    return {
+      summary: `${skuInQuestion} decision brief: forecast demand is ${number(skuSummary.forecast_28d_qty, 1)} units over the next 28 days, with ${money(skuSummary.forecast_28d_revenue)} estimated revenue and ${money(skuSummary.forecast_28d_profit)} profit proxy.`,
+      actions: [
+        briefRow.risk_type === "Overstock risk" ? "Review purchase slowdown" : "Validate replenishment coverage",
+        "Confirm supplier availability",
+        "Monitor demand change vs last 28D",
+      ],
+      rows: [briefRow],
+      columns: [
+        { key: "sku_id", label: "SKU" },
+        { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
+        { key: "risk_type", label: "Alert Group", render: (v) => <RiskBadge type={v} /> },
+        { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
+        { key: "profit_at_risk_proxy", label: "Profit / Risk Proxy", render: money },
+        { key: "recommended_action", label: "Recommendation", render: (v) => actionLabel[v] || v },
+      ],
+    };
+  }
   if (q.includes("profit")) {
     return {
       summary: "Commercial priority brief: these SKUs carry the strongest 28-day profit proxy and should be protected first when supply or logistics capacity is constrained.",
@@ -882,6 +939,37 @@ function calculateScenario(summary, lead, safety, uplift) {
   });
 }
 
+function DemoDock({ active, demoIndex, setDemoIndex, setActive }) {
+  const isRunning = demoIndex >= 0;
+  const currentIndex = isRunning ? demoIndex : Math.max(0, demoSteps.findIndex((step) => step.key === active));
+  const current = demoSteps[currentIndex] || demoSteps[0];
+  const startDemo = () => {
+    setDemoIndex(0);
+    setActive(demoSteps[0].key);
+  };
+  const nextStep = () => {
+    const next = Math.min(currentIndex + 1, demoSteps.length - 1);
+    setDemoIndex(next);
+    setActive(demoSteps[next].key);
+  };
+  const stopDemo = () => setDemoIndex(-1);
+
+  return (
+    <div className={`demoDock ${isRunning ? "running" : ""}`}>
+      <div>
+        <span>{isRunning ? `Pitch step ${currentIndex + 1}/${demoSteps.length}` : "Pitch mode"}</span>
+        <strong>{isRunning ? current.title : "Guided product demo"}</strong>
+        <p>{isRunning ? current.line : "Walk through dashboard, risk, SKU detail, agent, and scenario in order."}</p>
+      </div>
+      <div className="demoActions">
+        {!isRunning ? <button type="button" onClick={startDemo}>Start Demo</button> : null}
+        {isRunning && currentIndex < demoSteps.length - 1 ? <button type="button" onClick={nextStep}>Next</button> : null}
+        {isRunning ? <button type="button" className="ghostButton" onClick={stopDemo}>End</button> : null}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const data = useDashboardData();
   const getInitialPage = () => {
@@ -889,15 +977,20 @@ function App() {
     return pages.some((page) => page.key === key) ? key : "dashboard";
   };
   const [active, setActiveState] = React.useState(getInitialPage);
+  const [demoIndex, setDemoIndex] = React.useState(-1);
 
   React.useEffect(() => {
     const onHashChange = () => {
       const key = window.location.hash.replace("#", "");
-      if (pages.some((page) => page.key === key)) setActiveState(key);
+      if (pages.some((page) => page.key === key)) {
+        setActiveState(key);
+        const index = demoSteps.findIndex((step) => step.key === key);
+        if (demoIndex >= 0 && index >= 0) setDemoIndex(index);
+      }
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
+  }, [demoIndex]);
 
   const setActive = (key) => {
     setActiveState(key);
@@ -923,7 +1016,8 @@ function App() {
   return (
     <div className="appShell">
       <Sidebar active={active} setActive={setActive} summary={data.summary} risk={data.risk} forecast={data.forecast} />
-      <main>{page}</main>
+      <main className={demoIndex >= 0 ? "demoActive" : ""}>{page}</main>
+      <DemoDock active={active} demoIndex={demoIndex} setDemoIndex={setDemoIndex} setActive={setActive} />
     </div>
   );
 }

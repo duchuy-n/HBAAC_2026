@@ -83,12 +83,13 @@ nav { display: grid; gap: 7px; margin: 22px 0; }
 }
 .topHeader h1 { font-size: 32px; line-height: 1; margin: 0 0 12px; letter-spacing: -0.02em; }
 .topHeader p { color: var(--muted); margin: 0; font-size: 14px; font-weight: 650; }
-.headerControls { display: grid; grid-template-columns: minmax(210px, 1fr) 190px 118px 128px 42px; gap: 10px; margin-top: 16px; }
+.headerControls { display: grid; grid-template-columns: minmax(250px, 1fr) 300px 42px; gap: 10px; margin-top: 16px; }
 .headerControls .headerFilter, .searchBox, .iconButton {
   height: 40px; background: #fff; border: 1px solid var(--line); color: var(--text);
   border-radius: 13px; padding: 0 13px; display: flex; align-items: center; gap: 8px;
   box-shadow: 0 8px 20px rgba(15,76,92,.04); font-size: 13px; font-weight: 750;
 }
+.headerFilter { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .searchBox { color: var(--muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .searchBox input {
   margin: 0;
@@ -143,6 +144,14 @@ nav { display: grid; gap: 7px; margin: 22px 0; }
 .card { padding: 18px; min-width: 0; }
 .cardHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .cardHead h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+.priorityHeroCard {
+  border-color: #a9ddea;
+  box-shadow: 0 22px 60px rgba(7, 89, 133, .13);
+  margin-bottom: 22px;
+}
+.priorityHeroCard .cardHead h2 {
+  font-size: 22px;
+}
 .heroChartCard {
   padding: 22px;
   border-color: #b7e7ee;
@@ -291,6 +300,31 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
 .copilotHero { display:flex; gap: 14px; align-items: center; color: #fff; border-radius: 18px; padding: 18px; background: linear-gradient(135deg, var(--primary), var(--cyan)); margin-bottom: 16px; }
 .copilotHero strong { font-size: 20px; }
 .copilotHero p { margin: 4px 0 0; color: rgba(255,255,255,.78); }
+.skuContextCard {
+  padding: 13px 14px;
+  border-radius: 15px;
+  border: 1px solid #b7e7ee;
+  background: #f4fbfd;
+  margin-bottom: 14px;
+}
+.skuContextCard span {
+  color: var(--primary);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: .03em;
+  font-weight: 950;
+}
+.skuContextCard strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+}
+.skuContextCard p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-weight: 750;
+  font-size: 12px;
+}
 .stackLabel { display:block; margin-bottom: 14px; }
 .primaryButton { height: 48px; border: 0; border-radius: 14px; padding: 0 22px; color: #fff; font-weight: 900; background: linear-gradient(135deg, var(--primary), var(--cyan)); box-shadow: 0 14px 28px rgba(6,182,212,.22); cursor: pointer; }
 .smallMetricRow { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
@@ -325,6 +359,68 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: .03em;
+}
+
+.demoDock {
+  position: fixed;
+  right: 24px;
+  bottom: 22px;
+  z-index: 20;
+  width: min(430px, calc(100vw - 48px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid #9bdced;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 22px 60px rgba(7, 89, 133, .20);
+  backdrop-filter: blur(10px);
+}
+.demoDock.running {
+  border-color: var(--cyan);
+}
+.demoDock span {
+  color: var(--primary);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: .04em;
+  font-weight: 950;
+}
+.demoDock strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 16px;
+}
+.demoDock p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.demoActions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.demoActions button {
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 13px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--cyan));
+  font-weight: 950;
+  cursor: pointer;
+}
+.demoActions .ghostButton {
+  color: var(--primary);
+  background: #dff6f8;
+  border: 1px solid #b7e7ee;
+}
+.demoActive .topHeader {
+  border-bottom-color: #9bdced;
 }
 
 .loading { height: 100vh; display:grid; place-items:center; align-content:center; gap: 14px; color: var(--primary); background: var(--bg); }
