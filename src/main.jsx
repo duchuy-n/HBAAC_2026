@@ -842,7 +842,11 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
   const asksBudget = hasAny(q, ["budget", "limited", "gioi han", "uu tien", "priority", "prioritize", "nhap gap", "nhap them", "mua them", "logistics", "this week", "tuan nay"]);
   const asksStockout = hasAny(q, ["stockout", "thieu hang", "het hang", "replenishment", "reorder", "nhap hang", "nhap them", "mua them"]);
   const asksGlobalList = hasAny(q, ["top", "which skus", "sku nao", "list", "danh sach", "highest", "cao nhat"]);
-  const asksSkuContext = Boolean(skuInQuestion) && (q.includes(skuInQuestion.toLowerCase()) || hasAny(q, ["this", "selected", "current", "sku", "ma hang", "san pham"]) || (!asksGlobalList && Boolean(selectedSku)));
+  const asksGenericTopSku = asksGlobalList && !asksProfit && !asksRevenue && !asksOverstock && !asksTrend && !asksLeadTime;
+  const asksSkuContext = Boolean(skuInQuestion) && (
+    q.includes(skuInQuestion.toLowerCase()) ||
+    (!asksGlobalList && (hasAny(q, ["this", "selected", "current", "sku", "ma hang", "san pham"]) || Boolean(selectedSku)))
+  );
 
   if (asksDataGuardrail) {
     return {
@@ -861,6 +865,23 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
       ],
       columns: dataGovernanceColumns,
       note: "Decision note: the agent can explain and rank what is loaded in the CSV tables; it should not invent live inventory, supplier commitments, or purchase orders.",
+    };
+  }
+
+  if (asksGenericTopSku) {
+    const rows = topBy(stockoutRows, "profit_at_risk_proxy", 10);
+    return {
+      intent: "Top SKU operating priority",
+      summary: "Here are the top SKUs to review first. I rank them by stockout exposure and profit-at-risk proxy, so the list is useful for replenishment prioritization rather than just raw forecast volume.",
+      metrics: [
+        { label: "Stockout SKUs", value: number(stockoutRows.length) },
+        { label: "Top 10 profit at risk", value: shortMoney(rows.reduce((s, row) => s + Number(row.profit_at_risk_proxy || 0), 0)) },
+        { label: "Top 10 order qty", value: number(rows.reduce((s, row) => s + Number(row.suggested_order_qty || 0), 0), 1) },
+      ],
+      actions: ["Review these SKUs first", "Confirm available stock", "Prioritize supplier follow-up"],
+      rows,
+      columns: riskColumns({ includeOrder: true }),
+      note: "If you want a different definition, ask for top SKU by revenue, profit, demand, stockout risk, or overstock risk.",
     };
   }
 
