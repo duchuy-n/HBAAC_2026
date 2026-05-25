@@ -303,8 +303,8 @@ function ForecastChart({ series, yLabel = "Daily quantity", height = 320, showAr
       <svg className="forecastChart" style={{ height: `${height}px` }} viewBox={`0 0 ${width} ${height}`} role="img">
         <defs>
           <linearGradient id="forecastFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#38BDF8" stopOpacity="0.30" />
-            <stop offset="100%" stopColor="#BAE6FD" stopOpacity="0.05" />
+            <stop offset="0%" stopColor="#38BDF8" stopOpacity="0.22" />
+            <stop offset="100%" stopColor="#E0F2FE" stopOpacity="0.04" />
           </linearGradient>
         </defs>
         <rect x="0" y="0" width={width} height={height} rx="18" fill="#ffffff" />
@@ -318,9 +318,9 @@ function ForecastChart({ series, yLabel = "Daily quantity", height = 320, showAr
         {showArea && series[0]?.points.length ? <path d={areaPath(series[0].points)} fill="url(#forecastFill)" /> : null}
         {series.map((item) => (
           <g key={item.name}>
-            <path d={linePath(item.points)} fill="none" stroke={item.color} strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" strokeDasharray={item.dash || "none"} />
+            <path d={linePath(item.points)} fill="none" stroke={item.color} strokeWidth="3.9" strokeLinecap="round" strokeLinejoin="round" strokeDasharray={item.dash || "none"} />
             {item.points.map((point, i) => isValid(point) ? (
-              <circle key={`${item.name}-${point.date}-${i}`} cx={x(i)} cy={y(valueOf(point))} r="3.6" fill="#ffffff" stroke={item.color} strokeWidth="2.4" />
+              <circle className="forecastPoint" key={`${item.name}-${point.date}-${i}`} cx={x(i)} cy={y(valueOf(point))} r="2.4" fill="#ffffff" stroke={item.color} strokeWidth="1.8" />
             ) : null)}
           </g>
         ))}
@@ -351,9 +351,9 @@ function DonutChart({ stockout, overstock }) {
   return (
     <div className="donutWrap">
       <svg viewBox="0 0 190 190" className="donut">
-        <circle cx="95" cy="95" r={r} fill="none" stroke="#E5EDF0" strokeWidth="28" />
-        <circle cx="95" cy="95" r={r} fill="none" stroke="#2563EB" strokeWidth="28" strokeDasharray={`${overPct * c} ${c}`} transform="rotate(-90 95 95)" />
-        <circle cx="95" cy="95" r={r} fill="none" stroke="#EF4444" strokeWidth="28" strokeDasharray={`${stockPct * c} ${c}`} strokeDashoffset={-overPct * c} transform="rotate(-90 95 95)" />
+        <circle cx="95" cy="95" r={r} fill="none" stroke="#E2E8F0" strokeWidth="28" />
+        <circle cx="95" cy="95" r={r} fill="none" stroke="#CBD5E1" strokeWidth="28" strokeDasharray={`${overPct * c} ${c}`} transform="rotate(-90 95 95)" />
+        <circle cx="95" cy="95" r={r} fill="none" stroke="#EF4444" strokeWidth="28" strokeLinecap="round" strokeDasharray={`${stockPct * c} ${c}`} strokeDashoffset={-overPct * c} transform="rotate(-90 95 95)" />
         <text x="95" y="92" textAnchor="middle" className="donutValue">{number(total)}</text>
         <text x="95" y="112" textAnchor="middle" className="donutLabel">flagged SKUs</text>
       </svg>
@@ -437,9 +437,9 @@ function Dashboard({ data }) {
         <KpiCard icon={Boxes} label="Managed SKUs" value={number(summary.length)} sub="Active catalog" tone="teal" />
         <KpiCard icon={TrendingUp} label="Next 28-day Demand" value={number(summary.reduce((s, r) => s + r.forecast_28d_qty, 0))} sub="Forecast batch" tone="cyan" />
         <KpiCard icon={DollarSign} label="Estimated Revenue" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0))} sub="Forecast x price" tone="green" />
-        <KpiCard icon={BarChart3} label="Profit Proxy" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_profit, 0))} sub="Margin proxy" tone="amber" />
+        <KpiCard icon={BarChart3} label="Profit Proxy" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_profit, 0))} sub="Margin proxy" tone="green" />
         <KpiCard icon={AlertTriangle} label="Stockout Risk" value={number(stockout.length)} sub="Action queue" tone="red" />
-        <KpiCard icon={PackageSearch} label="Overstock Risk" value={number(overstock.length)} sub="Inventory control" tone="purple" />
+        <KpiCard icon={PackageSearch} label="Overstock Risk" value={number(overstock.length)} sub="Inventory control" tone="amber" />
       </div>
       <Card title="Priority Action Queue" tag="highest value at risk" className="priorityHeroCard">
         <DecisionBrief
@@ -470,7 +470,7 @@ function Dashboard({ data }) {
             series={[
               {
                 name: "Forecast demand",
-                color: "#075985",
+                color: "#1E40AF",
                 points: demandByDate.map((row) => ({ date: row.date, value: row.forecast_qty })),
               },
             ]}
@@ -502,7 +502,7 @@ function AlertMix({ stockout, overstock }) {
   return (
     <div className="alertMix">
       <MixRow label="Stockout risk" value={stockout} color="#EF4444" total={total} />
-      <MixRow label="Overstock risk" value={overstock} color="#2563EB" total={total} />
+      <MixRow label="Overstock risk" value={overstock} color="#F59E0B" total={total} />
     </div>
   );
 }
@@ -639,7 +639,7 @@ function ForecastDetail({ data }) {
       tag: "hero analysis",
       note: "This is the main demo view: the model forecast is shown against simulated future market data for storytelling after the train period.",
       series: [
-        { name: "Forecast", color: "#075985", points: forecastRows },
+        { name: "Forecast", color: "#1E40AF", points: forecastRows },
         { name: "Simulated market data", color: "#F97316", dash: "7 5", points: simulatedRows },
       ],
     },
@@ -648,7 +648,7 @@ function ForecastDetail({ data }) {
       tag: "model output",
       note: "This view shows only the model output for the next 28 days after the train period. No historical actual sales are overlaid on future dates.",
       series: [
-        { name: "Forecast", color: "#075985", points: forecastRows },
+        { name: "Forecast", color: "#1E40AF", points: forecastRows },
       ],
     },
   }[chartView];
