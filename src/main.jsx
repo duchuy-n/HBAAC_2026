@@ -14,10 +14,12 @@ import {
   LineChart,
   PackageSearch,
   Search,
+  SendHorizontal,
   Settings2,
   ShieldCheck,
   TrendingUp,
   Warehouse,
+  X,
 } from "lucide-react";
 import "./styles.css";
 
@@ -1152,6 +1154,94 @@ function DemoDock({ active, demoIndex, setDemoIndex, setActive }) {
   );
 }
 
+function FloatingCopilot({ data, setActive }) {
+  const { summary, risk } = data;
+  const [open, setOpen] = React.useState(false);
+  const [question, setQuestion] = React.useState("");
+  const [submitted, setSubmitted] = React.useState("");
+  const [selectedSku, setSelectedSku] = React.useState(sessionStorage.getItem("selectedSku") || "");
+  const answer = React.useMemo(() => buildAgentAnswer(submitted, summary, risk, selectedSku), [submitted, summary, risk, selectedSku]);
+  const contextRow = summary.find((row) => row.sku_id === selectedSku);
+
+  React.useEffect(() => {
+    const syncSku = (event) => setSelectedSku(String(event.detail || sessionStorage.getItem("selectedSku") || ""));
+    window.addEventListener("sku-search", syncSku);
+    window.addEventListener("storage", syncSku);
+    return () => {
+      window.removeEventListener("sku-search", syncSku);
+      window.removeEventListener("storage", syncSku);
+    };
+  }, []);
+
+  const run = () => {
+    const cleaned = question.trim();
+    if (cleaned) setSubmitted(cleaned);
+  };
+
+  const openWorkspace = () => {
+    setOpen(false);
+    setActive("agent");
+  };
+
+  return (
+    <div className={`floatingCopilot ${open ? "open" : ""}`}>
+      {open ? (
+        <div className="copilotPanel">
+          <div className="copilotPanelHeader">
+            <div className="copilotAvatar"><Bot size={22} /></div>
+            <div>
+              <span>AI Decision Copilot</span>
+              <strong>{contextRow ? `Context: ${selectedSku}` : "Ask from forecast and risk tables"}</strong>
+            </div>
+            <button type="button" className="iconButton" onClick={() => setOpen(false)} aria-label="Close AI copilot"><X size={18} /></button>
+          </div>
+          <div className="copilotMessages">
+            {!submitted ? (
+              <div className="copilotEmpty">
+                <Bot size={38} />
+                <strong>Ready for an operating brief</strong>
+                <p>Ask about replenishment, stockout risk, profit priority, demand trend, lead time, or a selected SKU.</p>
+              </div>
+            ) : (
+              <>
+                <div className="miniQuestion">{submitted}</div>
+                <div className="miniAnswer">
+                  <span>{answer.intent || "Decision brief"}</span>
+                  <strong>{answer.summary}</strong>
+                  {answer.metrics?.length ? (
+                    <div className="miniMetricRow">
+                      {answer.metrics.slice(0, 3).map((item) => <ScopeMetric key={item.label} label={item.label} value={item.value} />)}
+                    </div>
+                  ) : null}
+                  <div className="miniActions">
+                    {answer.actions.slice(0, 3).map((item) => <em key={item}>{item}</em>)}
+                  </div>
+                  <DataTable rows={answer.rows} limit={5} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={answer.columns} />
+                  {answer.note ? <p className="agentNote">{answer.note}</p> : null}
+                </div>
+              </>
+            )}
+          </div>
+          <div className="copilotInputRow">
+            <input
+              value={question}
+              onChange={(event) => setQuestion(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter") run(); }}
+              placeholder={contextRow ? `Ask what to do for ${selectedSku}...` : "Ask about SKUs, stockout, profit, lead time..."}
+            />
+            <button type="button" onClick={run} aria-label="Run AI analysis"><SendHorizontal size={18} /></button>
+          </div>
+          <button type="button" className="workspaceLink" onClick={openWorkspace}>Open full AI workspace</button>
+        </div>
+      ) : null}
+      <button type="button" className="copilotLauncher" onClick={() => setOpen((value) => !value)} aria-label="Open AI decision copilot">
+        <Bot size={30} />
+        <span>AI</span>
+      </button>
+    </div>
+  );
+}
+
 function App() {
   const data = useDashboardData();
   const getInitialPage = () => {
@@ -1200,6 +1290,7 @@ function App() {
       <Sidebar active={active} setActive={setActive} summary={data.summary} risk={data.risk} forecast={data.forecast} />
       <main className={demoIndex >= 0 ? "demoActive" : ""}>{page}</main>
       <DemoDock active={active} demoIndex={demoIndex} setDemoIndex={setDemoIndex} setActive={setActive} />
+      <FloatingCopilot data={data} setActive={setActive} />
     </div>
   );
 }

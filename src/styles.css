@@ -399,7 +399,7 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
 
 .demoDock {
   position: fixed;
-  right: 24px;
+  left: 284px;
   bottom: 22px;
   z-index: 20;
   width: min(430px, calc(100vw - 48px));
@@ -459,6 +459,214 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
   border-bottom-color: #9bdced;
 }
 
+.floatingCopilot {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 35;
+}
+.copilotLauncher {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  border: 0;
+  border-radius: 24px;
+  color: #fff;
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 52%, #0284c7 100%);
+  box-shadow: 0 22px 52px rgba(15, 23, 42, .24), 0 0 0 8px rgba(6, 182, 212, .14);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.copilotLauncher:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 26px 66px rgba(15, 23, 42, .28), 0 0 0 10px rgba(6, 182, 212, .16);
+}
+.copilotLauncher span {
+  position: absolute;
+  right: -3px;
+  top: -5px;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #0f172a;
+  background: #dff6f8;
+  border: 1px solid #9bdced;
+  font-size: 11px;
+  font-weight: 950;
+}
+.copilotPanel {
+  position: absolute;
+  right: 0;
+  bottom: 84px;
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(720px, calc(100vh - 130px));
+  display: grid;
+  grid-template-rows: auto minmax(220px, 1fr) auto auto;
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid #b8e5ee;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 34px 90px rgba(15, 23, 42, .24);
+}
+.copilotPanelHeader {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  background: linear-gradient(135deg, #f8fafc, #e8f7fb);
+}
+.copilotAvatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--cyan));
+  box-shadow: 0 14px 28px rgba(2, 132, 199, .18);
+}
+.copilotPanelHeader span {
+  color: var(--cyan);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: .04em;
+  font-weight: 950;
+}
+.copilotPanelHeader strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 15px;
+  color: var(--text);
+}
+.iconButton {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid #cbd5e1;
+  color: var(--primary);
+  background: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.copilotMessages {
+  min-height: 260px;
+  overflow: auto;
+  padding: 16px;
+}
+.copilotEmpty {
+  min-height: 230px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  text-align: center;
+  color: var(--muted);
+}
+.copilotEmpty svg { color: var(--cyan); }
+.copilotEmpty strong {
+  color: var(--text);
+  font-size: 20px;
+}
+.copilotEmpty p {
+  max-width: 360px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.5;
+}
+.miniQuestion {
+  width: fit-content;
+  max-width: 86%;
+  margin-left: auto;
+  padding: 11px 13px;
+  border-radius: 16px 16px 4px 16px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--cyan));
+  font-size: 13px;
+  font-weight: 850;
+}
+.miniAnswer {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid #dbeafe;
+  background: #f8fafc;
+}
+.miniAnswer > span {
+  color: var(--primary);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: .04em;
+  font-weight: 950;
+}
+.miniAnswer > strong {
+  display: block;
+  margin: 8px 0 12px;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.miniMetricRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.miniActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+.miniActions em {
+  font-style: normal;
+  border-radius: 999px;
+  padding: 7px 9px;
+  color: var(--primary);
+  background: #e0f2fe;
+  border: 1px solid #bae6fd;
+  font-size: 11px;
+  font-weight: 900;
+}
+.copilotInputRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid #e2e8f0;
+  background: #fff;
+}
+.copilotInputRow input {
+  height: 46px;
+  border-radius: 14px;
+}
+.copilotInputRow button {
+  border: 0;
+  border-radius: 14px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), var(--cyan));
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.workspaceLink {
+  margin: 0 16px 16px;
+  height: 42px;
+  border-radius: 14px;
+  border: 1px solid #bae6fd;
+  color: var(--primary);
+  background: #e8f7fb;
+  font-weight: 950;
+  cursor: pointer;
+}
+
 .loading { height: 100vh; display:grid; place-items:center; align-content:center; gap: 14px; color: var(--primary); background: var(--bg); }
 .loading strong { font-size: 24px; }
 .loading span { color: var(--muted); }
@@ -471,4 +679,16 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
   .grid.twoOne, .grid.two, .agentGrid { grid-template-columns: 1fr; }
   .deltaGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .headerControls { grid-template-columns: 1fr 1fr; }
+  .demoDock { left: 22px; width: min(430px, calc(100vw - 112px)); }
+}
+
+@media (max-width: 760px) {
+  .floatingCopilot { right: 16px; bottom: 16px; }
+  .copilotPanel {
+    width: calc(100vw - 32px);
+    max-height: calc(100vh - 112px);
+    bottom: 82px;
+  }
+  .miniMetricRow, .answerMetrics { grid-template-columns: 1fr; }
+  .demoDock { display: none; }
 }
