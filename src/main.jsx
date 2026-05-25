@@ -739,7 +739,7 @@ function Agent({ data }) {
             <div className="skuContextCard">
               <span>Selected SKU</span>
               <strong>{selectedSku}</strong>
-              <p>{money(contextRow.forecast_28d_revenue)} revenue · {money(contextRow.forecast_28d_profit)} profit proxy · {contextRisk?.risk_type || "Commercial priority"}</p>
+              <p>{money(contextRow.forecast_28d_revenue)} revenue | {money(contextRow.forecast_28d_profit)} profit proxy | {contextRisk?.risk_type || "Commercial priority"}</p>
             </div>
           ) : null}
           <label className="stackLabel">Ask a question<input value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") runAnalysis(); }} placeholder={contextRow ? `Ask what logistics should do for ${selectedSku}...` : "Ask about replenishment, stockout risk, profit priority, or this week's actions..."} /></label>
@@ -755,11 +755,18 @@ function Agent({ data }) {
           ) : (
             <div className="answerPane">
               <div className="questionBubble">{submitted}</div>
+              {answer.intent ? <div className="intentLine"><Bot size={16} /> {answer.intent}</div> : null}
               <h3>{answer.summary}</h3>
+              {answer.metrics?.length ? (
+                <div className="answerMetrics">
+                  {answer.metrics.map((item) => <ScopeMetric key={item.label} label={item.label} value={item.value} />)}
+                </div>
+              ) : null}
               <div className="briefActions">
                 {answer.actions.map((item) => <span key={item}>{item}</span>)}
               </div>
               <DataTable rows={answer.rows} limit={10} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={answer.columns} />
+              {answer.note ? <p className="agentNote">{answer.note}</p> : null}
             </div>
           )}
         </Card>
@@ -768,14 +775,93 @@ function Agent({ data }) {
   );
 }
 
+const normalizeQuery = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+const hasAny = (text, words) => words.some((word) => text.includes(word));
+
+const topBy = (rows, key, limit = 10) =>
+  [...rows].sort((a, b) => Number(b[key] || 0) - Number(a[key] || 0)).slice(0, limit);
+
+function leadTimeFromQuestion(text) {
+  const normalized = normalizeQuery(text);
+  const direct = normalized.match(/lead\s*time\D{0,12}(\d{1,2})/i);
+  if (direct) return Number(direct[1]);
+  const dayMention = normalized.match(/(\d{1,2})\s*(ngay|day|days)/i);
+  return dayMention ? Number(dayMention[1]) : null;
+}
+
+function riskColumns({ includeOrder = false } = {}) {
+  return [
+    { key: "sku_id", label: "SKU" },
+    { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
+    { key: "risk_type", label: "Alert Group", render: (v) => <RiskBadge type={v} /> },
+    { key: "risk_score", label: "Risk Score", render: (v) => number(v, 1) },
+    { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
+    ...(includeOrder ? [{ key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) }] : []),
+    { key: "revenue_at_risk_proxy", label: "Revenue at Risk", render: money },
+    { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
+    { key: "recommended_action", label: "Recommendation", render: (v) => actionLabel[v] || v },
+  ];
+}
+
+const commercialColumns = [
+  { key: "sku_id", label: "SKU" },
+  { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
+  { key: "demand_change_pct", label: "Demand Change", render: (v) => `${number(v, 1)}%` },
+  { key: "forecast_28d_revenue", label: "Revenue", render: money },
+  { key: "forecast_28d_profit", label: "Profit Proxy", render: money },
+  { key: "recommended_action", label: "Recommendation", render: (v) => actionLabel[v] || v },
+];
+
+const dataGovernanceColumns = [
+  { key: "asset", label: "Data Asset" },
+  { key: "role", label: "Role in Demo" },
+  { key: "guardrail", label: "Guardrail" },
+];
+
 function buildAgentAnswer(question, summary, risk, selectedSku = "") {
   if (!question) return null;
-  const q = question.toLowerCase();
+  const q = normalizeQuery(question);
   const skuInQuestion = String(question.match(/sku-\d+/i)?.[0] || selectedSku || "").toUpperCase();
   const skuSummary = summary.find((row) => row.sku_id === skuInQuestion);
   const skuRisk = risk.find((row) => row.sku_id === skuInQuestion);
-  const asksGlobalList = q.includes("top") || q.includes("which skus") || q.includes("highest") || q.includes("list");
-  const asksSkuContext = q.includes(skuInQuestion.toLowerCase()) || q.includes("this") || q.includes("selected") || q.includes("current") || q.includes("sku") || (!asksGlobalList && Boolean(selectedSku));
+  const stockoutRows = risk.filter((row) => row.risk_type === "Stockout risk");
+  const overstockRows = risk.filter((row) => row.risk_type === "Overstock risk");
+  const asksDataGuardrail = hasAny(q, ["real time", "realtime", "du lieu", "data", "source", "lay o dau", "thuc te", "actual", "inventory that", "ton kho that"]);
+  const asksOverstock = hasAny(q, ["overstock", "du hang", "ton kho du", "ton du", "slow purchase", "promotion", "bundle"]);
+  const asksProfit = hasAny(q, ["profit", "loi nhuan", "margin", "high margin"]);
+  const asksRevenue = hasAny(q, ["revenue", "doanh thu", "sales impact"]);
+  const asksTrend = hasAny(q, ["trend", "xu huong", "increase", "decrease", "tang", "giam", "demand change", "bien dong"]);
+  const asksLeadTime = hasAny(q, ["lead time", "supplier delay", "delay", "14 ngay", "14 days"]);
+  const asksBudget = hasAny(q, ["budget", "limited", "gioi han", "uu tien", "priority", "prioritize", "nhap gap", "nhap them", "mua them", "logistics", "this week", "tuan nay"]);
+  const asksStockout = hasAny(q, ["stockout", "thieu hang", "het hang", "replenishment", "reorder", "nhap hang", "nhap them", "mua them"]);
+  const asksGlobalList = hasAny(q, ["top", "which skus", "sku nao", "list", "danh sach", "highest", "cao nhat"]);
+  const asksSkuContext = Boolean(skuInQuestion) && (q.includes(skuInQuestion.toLowerCase()) || hasAny(q, ["this", "selected", "current", "sku", "ma hang", "san pham"]) || (!asksGlobalList && Boolean(selectedSku)));
+
+  if (asksDataGuardrail) {
+    return {
+      intent: "Data governance and demo guardrail",
+      summary: "This demo is not a real-time ERP/WMS screen. It reads prepared forecast and risk tables, then turns them into decision-support recommendations for the next 28 days.",
+      metrics: [
+        { label: "Forecast horizon", value: "28D" },
+        { label: "Managed SKUs", value: number(summary.length) },
+        { label: "Risk records", value: number(risk.length) },
+      ],
+      actions: ["Use as decision support", "Validate real stock before purchase", "Do not claim live ERP integration"],
+      rows: [
+        { asset: "sku_forecast_summary.csv", role: "SKU-level demand, revenue, profit proxy, and demand change", guardrail: "Forecast output, not live sales feed" },
+        { asset: "sku_risk_table.csv", role: "Stockout/overstock ranking and recommended actions", guardrail: "Inventory and lead time are scenario assumptions" },
+        { asset: "forecast_long.csv", role: "Daily 28-day forecast curve for charting", guardrail: "Precomputed batch forecast" },
+      ],
+      columns: dataGovernanceColumns,
+      note: "Decision note: the agent can explain and rank what is loaded in the CSV tables; it should not invent live inventory, supplier commitments, or purchase orders.",
+    };
+  }
+
   if (skuSummary && asksSkuContext) {
     const briefRow = skuRisk || {
       ...skuSummary,
@@ -784,51 +870,147 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
       profit_at_risk_proxy: skuSummary.forecast_28d_profit,
       recommended_action: "Prioritize replenishment and confirm supplier availability",
     };
+    const trend = Number(skuSummary.demand_change_pct || 0) >= 0 ? "up" : "down";
     return {
-      summary: `${skuInQuestion} decision brief: forecast demand is ${number(skuSummary.forecast_28d_qty, 1)} units over the next 28 days, with ${money(skuSummary.forecast_28d_revenue)} estimated revenue and ${money(skuSummary.forecast_28d_profit)} profit proxy.`,
+      intent: "Single-SKU decision brief",
+      summary: `${skuInQuestion} is forecast at ${number(skuSummary.forecast_28d_qty, 1)} units over the next 28 days, ${trend} ${number(Math.abs(skuSummary.demand_change_pct || 0), 1)}% versus the last 28 days. Estimated revenue is ${money(skuSummary.forecast_28d_revenue)} with ${money(skuSummary.forecast_28d_profit)} profit proxy.`,
+      metrics: [
+        { label: "Last 28D actual", value: number(skuSummary.last_28d_qty, 1) },
+        { label: "28D forecast", value: number(skuSummary.forecast_28d_qty, 1) },
+        { label: "Suggested order", value: number(briefRow.suggested_order_qty || 0, 1) },
+      ],
       actions: [
         briefRow.risk_type === "Overstock risk" ? "Review purchase slowdown" : "Validate replenishment coverage",
         "Confirm supplier availability",
         "Monitor demand change vs last 28D",
       ],
       rows: [briefRow],
-      columns: [
-        { key: "sku_id", label: "SKU" },
-        { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
-        { key: "risk_type", label: "Alert Group", render: (v) => <RiskBadge type={v} /> },
-        { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
-        { key: "profit_at_risk_proxy", label: "Profit / Risk Proxy", render: money },
-        { key: "recommended_action", label: "Recommendation", render: (v) => actionLabel[v] || v },
-      ],
+      columns: riskColumns({ includeOrder: true }),
+      note: "This is a recommendation brief. Purchase approval still belongs to the responsible planner or manager.",
     };
   }
-  if (q.includes("profit")) {
+
+  if (asksLeadTime) {
+    const lead = leadTimeFromQuestion(question) || 14;
+    const rows = calculateScenario(summary, lead, 7, 0)
+      .filter((row) => row.risk_type === "Stockout risk")
+      .sort((a, b) => Number(b.profit_at_risk_proxy || 0) - Number(a.profit_at_risk_proxy || 0))
+      .slice(0, 10);
     return {
-      summary: "Commercial priority brief: these SKUs carry the strongest 28-day profit proxy and should be protected first when supply or logistics capacity is constrained.",
-      actions: ["Protect availability", "Review supplier coverage", "Prioritize high-margin SKUs"],
-      rows: [...summary].sort((a, b) => b.forecast_28d_profit - a.forecast_28d_profit).slice(0, 10),
-      columns: [
-        { key: "sku_id", label: "SKU" },
-        { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={{ ...row, risk_type: "Stockout risk", profit_at_risk_proxy: row.forecast_28d_profit }} /> },
-        { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
-        { key: "forecast_28d_revenue", label: "Revenue", render: money },
-        { key: "forecast_28d_profit", label: "Profit Proxy", render: money },
+      intent: `Lead-time stress test (${lead} days)`,
+      summary: `If lead time is modeled at ${lead} days, these SKUs become the priority replenishment queue because forecast coverage and assumed stock create the highest stockout exposure.`,
+      metrics: [
+        { label: "Lead time", value: `${lead}D` },
+        { label: "Stockout-risk SKUs", value: number(rows.length) },
+        { label: "Profit at risk", value: shortMoney(rows.reduce((s, row) => s + Number(row.profit_at_risk_proxy || 0), 0)) },
       ],
+      actions: ["Stress-test supplier coverage", "Reserve purchase capacity for highest exposure", "Escalate SKUs with large suggested orders"],
+      rows,
+      columns: riskColumns({ includeOrder: true }),
+      note: "Lead time is a scenario assumption in this demo, not a live supplier SLA.",
     };
   }
-  const rows = risk.filter((r) => r.risk_type === "Stockout risk").sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy).slice(0, 10);
+
+  if (asksOverstock) {
+    const rows = topBy(overstockRows, "risk_score", 10);
+    return {
+      intent: "Overstock containment brief",
+      summary: rows.length
+        ? "These SKUs show the strongest overstock signals. The operating move is to slow purchasing, review bundles or promotions, and avoid tying cash in slow-moving inventory."
+        : "No material overstock-risk SKU is currently flagged in the loaded risk table.",
+      metrics: [
+        { label: "Overstock SKUs", value: number(overstockRows.length) },
+        { label: "Highest score", value: rows[0] ? number(rows[0].risk_score, 1) : "0.0" },
+      ],
+      actions: ["Slow purchase orders", "Review promotion or bundling", "Monitor demand before replenishment"],
+      rows,
+      columns: riskColumns(),
+      note: "Overstock is calculated from forecast demand and assumed inventory, so it is a planning signal rather than a warehouse count.",
+    };
+  }
+
+  if (asksProfit) {
+    const rows = topBy(summary, "forecast_28d_profit", 10);
+    return {
+      intent: "Commercial profit priority",
+      summary: "Commercial priority brief: these SKUs carry the strongest 28-day profit proxy and should be protected first when supply or logistics capacity is constrained.",
+      metrics: [
+        { label: "Top SKU profit", value: money(rows[0]?.forecast_28d_profit || 0) },
+        { label: "Top 10 profit", value: shortMoney(rows.reduce((s, row) => s + Number(row.forecast_28d_profit || 0), 0)) },
+      ],
+      actions: ["Protect availability", "Review supplier coverage", "Prioritize high-margin SKUs"],
+      rows,
+      columns: commercialColumns,
+      note: "Profit proxy is derived from the prepared dataset, not from a live accounting system.",
+    };
+  }
+
+  if (asksRevenue) {
+    const rows = topBy(summary, "forecast_28d_revenue", 10);
+    return {
+      intent: "Revenue impact priority",
+      summary: "These SKUs represent the largest estimated 28-day revenue exposure. They are useful for commercial prioritization when the team needs to protect sales impact first.",
+      metrics: [
+        { label: "Top SKU revenue", value: money(rows[0]?.forecast_28d_revenue || 0) },
+        { label: "Top 10 revenue", value: shortMoney(rows.reduce((s, row) => s + Number(row.forecast_28d_revenue || 0), 0)) },
+      ],
+      actions: ["Protect availability for high revenue SKUs", "Check pricing and margin before final priority", "Coordinate sales and logistics follow-up"],
+      rows,
+      columns: commercialColumns,
+      note: "Revenue impact is forecast quantity multiplied by price proxy from the prepared data.",
+    };
+  }
+
+  if (asksTrend) {
+    const rows = [...summary]
+      .sort((a, b) => Math.abs(Number(b.demand_change_pct || 0)) - Math.abs(Number(a.demand_change_pct || 0)))
+      .slice(0, 10);
+    return {
+      intent: "Demand movement monitor",
+      summary: "These SKUs show the largest forecast movement versus the recent 28-day actual window, so they deserve review before committing replenishment or promotion actions.",
+      metrics: [
+        { label: "Largest increase", value: `${number(Math.max(...summary.map((row) => Number(row.demand_change_pct || 0))), 1)}%` },
+        { label: "Largest decrease", value: `${number(Math.min(...summary.map((row) => Number(row.demand_change_pct || 0))), 1)}%` },
+      ],
+      actions: ["Review demand drivers", "Validate abnormal movement with sales team", "Use SKU drilldown before final order decision"],
+      rows,
+      columns: commercialColumns,
+      note: "Demand change compares the 28-day forecast against the recent 28-day actual window in the prepared demo data.",
+    };
+  }
+
+  if (asksBudget || asksStockout) {
+    const rows = topBy(stockoutRows, "profit_at_risk_proxy", 10);
+    return {
+      intent: asksBudget ? "Budget-constrained replenishment queue" : "Stockout-risk replenishment queue",
+      summary: asksBudget
+        ? "With limited replenishment budget or logistics capacity, prioritize these SKUs first because they combine stockout risk with the highest profit exposure."
+        : "These SKUs should be reviewed first for replenishment because the risk table flags meaningful stockout exposure over the next 28 days.",
+      metrics: [
+        { label: "Stockout SKUs", value: number(stockoutRows.length) },
+        { label: "Top 10 profit at risk", value: shortMoney(rows.reduce((s, row) => s + Number(row.profit_at_risk_proxy || 0), 0)) },
+        { label: "Top 10 order qty", value: number(rows.reduce((s, row) => s + Number(row.suggested_order_qty || 0), 0), 1) },
+      ],
+      actions: ["Prioritize replenishment", "Confirm supplier availability", "Escalate high-exposure SKUs"],
+      rows,
+      columns: riskColumns({ includeOrder: true }),
+      note: "Suggested order quantity is scenario-based and should be validated against real stock and supplier constraints.",
+    };
+  }
+
+  const rows = topBy(stockoutRows, "profit_at_risk_proxy", 10);
   return {
+    intent: "Default operating brief",
     summary: "Replenishment command brief: prioritize SKUs where forecast demand, risk score, and profit exposure point to meaningful stockout impact.",
+    metrics: [
+      { label: "Stockout SKUs", value: number(stockoutRows.length) },
+      { label: "Overstock SKUs", value: number(overstockRows.length) },
+      { label: "Managed SKUs", value: number(summary.length) },
+    ],
     actions: ["Prepare replenishment review", "Confirm supplier availability", "Escalate critical SKUs"],
     rows,
-    columns: [
-      { key: "sku_id", label: "SKU" },
-      { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
-      { key: "risk_score", label: "Risk Score", render: (v) => number(v, 1) },
-      { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
-      { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
-      { key: "recommended_action", label: "Recommendation", render: (v) => actionLabel[v] || v },
-    ],
+    columns: riskColumns({ includeOrder: true }),
+    note: "I can answer questions from the loaded forecast and SKU risk tables. For live ERP, supplier, or warehouse facts, validate outside this demo.",
   };
 }
 
