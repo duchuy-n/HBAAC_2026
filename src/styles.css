@@ -139,6 +139,7 @@ nav { display: grid; gap: 7px; margin: 22px 0; }
 .grid { display: grid; gap: 18px; margin-bottom: 22px; }
 .grid.twoOne { grid-template-columns: minmax(0, 1.45fr) minmax(300px, .75fr); }
 .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.scenarioTop { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; margin-bottom: 18px; }
 .card { padding: 18px; min-width: 0; }
 .cardHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .cardHead h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
@@ -235,7 +236,7 @@ tr.clickableRow:hover td { background: #eaf7fa; }
 .step { display:flex; gap: 14px; padding: 15px; border-left: 5px solid var(--amber); border-radius: 14px; background: #fff; border-top: 1px solid var(--line); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .step span { color: var(--primary); font-weight: 900; }
 .step strong { display:block; margin-bottom: 5px; }
-.step p, .feature p, .note, .scenarioText { color: var(--muted); margin: 0; line-height: 1.55; }
+.step p, .feature p, .note { color: var(--muted); margin: 0; line-height: 1.55; }
 .featureList { display: grid; gap: 14px; }
 .feature { display: grid; grid-template-columns: 150px 1fr; gap: 14px; }
 .integrationFlow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -305,6 +306,26 @@ label > span { display: block; color: var(--cyan); text-align: center; font-size
 .sliderLabel { display:block; margin-bottom: 24px; }
 .sliderLabel > span { display:flex; justify-content: space-between; color: var(--text); text-align:left; font-size: 14px; }
 .sliderLabel strong { color: var(--cyan); }
+.scenarioNote {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid #b7e7ee;
+  background: #f4fbfd;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+.scenarioNote strong {
+  color: var(--primary);
+  white-space: nowrap;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
 
 .loading { height: 100vh; display:grid; place-items:center; align-content:center; gap: 14px; color: var(--primary); background: var(--bg); }
 .loading strong { font-size: 24px; }

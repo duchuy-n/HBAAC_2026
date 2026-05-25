@@ -797,14 +797,15 @@ function Scenario({ data }) {
   return (
     <>
       <TopHeader pageTitle="Scenario Simulator" subtitle="Estimate the operational impact of lead time, safety stock, and demand uplift assumptions." />
-      <div className="grid two">
+      <div className="scenarioTop">
         <Card title="Scenario Controls" tag="operational parameters">
           <Slider label="Lead time (days)" value={lead} setValue={setLead} min={3} max={30} />
           <Slider label="Safety stock (days)" value={safety} setValue={setSafety} min={0} max={21} />
           <Slider label="Demand uplift (%)" value={uplift} setValue={setUplift} min={-30} max={50} />
-        </Card>
-        <Card title="Scenario Logic" tag="decision support">
-          <p className="scenarioText">The system recalculates reorder points from forecast demand, lead time, and safety stock. Inventory remains a scenario assumption; this view supports decisions and does not create purchase orders.</p>
+          <div className="scenarioNote">
+            <strong>Assumption note</strong>
+            <span>Reorder points are recalculated from forecast demand, lead time, and safety stock. Inventory remains a demo assumption; no purchase order is created.</span>
+          </div>
         </Card>
       </div>
       <div className="kpiGrid four">
