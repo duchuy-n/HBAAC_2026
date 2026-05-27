@@ -1097,7 +1097,7 @@ const scenarioComparisonColumns = [
   { key: "name", label: "Scenario" },
   { key: "lead_time", label: "Lead Time", render: (value) => `${value}D` },
   { key: "demand_uplift", label: "Demand Uplift", render: (value) => `${value > 0 ? "+" : ""}${value}%` },
-  { key: "stockout_count", label: "Stockout SKUs", render: number },
+  { key: "stockout_count", label: "Stockout SKUs", render: (value) => number(value) },
   { key: "revenue_at_risk", label: "Revenue at Risk", render: money },
   { key: "delta_vs_baseline", label: "Revenue Delta", render: money },
 ];
@@ -1444,7 +1444,7 @@ function Scenario({ data }) {
           { key: "lead_time", label: "Lead Time", render: (value) => `${value}D` },
           { key: "safety_stock", label: "Safety Stock", render: (value) => `${value}D` },
           { key: "demand_uplift", label: "Demand Uplift", render: (value) => `${value > 0 ? "+" : ""}${value}%` },
-          { key: "stockout_count", label: "Stockout SKUs", render: number },
+          { key: "stockout_count", label: "Stockout SKUs", render: (value) => number(value) },
           { key: "revenue_at_risk", label: "Revenue at Risk", render: money },
           { key: "profit_at_risk", label: "Profit at Risk", render: money },
           { key: "delta_vs_baseline", label: "Revenue Delta", render: money },
