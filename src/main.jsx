@@ -143,7 +143,7 @@ function severityFor(row) {
 function urgencyFor(row) {
   const severity = severityFor(row);
   const order = Number(row.suggested_order_qty || 0);
-  const profit = Number(row.profit_at_risk_proxy || row.forecast_28d_profit || 0);
+  const profit = Number(row.profit_at_risk_proxy || 0);
   if (severity === "Critical" || order >= 100 || profit >= 1_500_000) return "High";
   if (severity === "High" || order >= 25 || profit >= 500_000) return "Medium";
   return row.risk_type === "Overstock risk" ? "Medium" : "Low";
@@ -262,8 +262,10 @@ function buildRescuePlan(row, summary) {
   const forecastDemand = Number(row.forecast_28d_qty || 0);
   const assumedStock = Number(row.current_stock_assumed || 0);
   const reorderGap = Math.max(Number(row.reorder_point || 0) - assumedStock, 0);
-  const unfulfilled = Math.max(reorderGap, Number(row.suggested_order_qty || 0) * 0.35, forecastDemand - assumedStock);
-  const directRevenue = Math.max(Number(row.revenue_at_risk_proxy || 0), unfulfilled * unitPrice);
+  const statedRevenueRisk = Number(row.revenue_at_risk_proxy || 0);
+  const statedShortageUnits = unitPrice > 0 && statedRevenueRisk > 0 ? statedRevenueRisk / unitPrice : 0;
+  const unfulfilled = statedShortageUnits || Math.max(reorderGap, Number(row.suggested_order_qty || 0) * 0.35, forecastDemand - assumedStock);
+  const directRevenue = statedRevenueRisk || unfulfilled * unitPrice;
   const bundleMultiplier = 1.55 + (seed % 45) / 100;
   const affectedBundles = 2 + (seed % 3);
   const affectedModels = 3 + (seed % 4);
@@ -297,7 +299,7 @@ function buildRescuePlan(row, summary) {
   });
   const supplier = {
     supplier: suppliers[seed % suppliers.length],
-    critical_skus: 8 + (seed % 9),
+    scenario_skus: 8 + (seed % 9),
     requested_lead_time: `${Number(row.lead_time_days || 14)}d -> 7d`,
     revenue_at_risk: directRevenue,
     expedite_qty: Math.max(10, Math.round(Number(row.suggested_order_qty || unfulfilled || 0))),
@@ -371,7 +373,7 @@ function rescueBriefText(row, plan, selectedActions) {
     "Recommended rescue actions:",
     ...topActions.map((action, index) => `${index + 1}. ${action.action} | Cost ${money(action.cost)} | Revenue protected ${money(action.revenue_protected)} | Score ${number(action.decision_score)}`),
     "",
-    `Supplier action: ask ${plan.supplier.supplier} to compress lead time to ${plan.supplier.requested_lead_time} for ${number(plan.supplier.expedite_qty)} units.`,
+    `Supplier action: ask ${plan.supplier.supplier} to compress lead time to ${plan.supplier.requested_lead_time} for ${number(plan.supplier.expedite_qty)} units across ${number(plan.supplier.scenario_skus)} scenario-linked SKUs.`,
     "Guardrail: substitute compatibility, warehouse stock, and supplier lead time are scenario assumptions for demo. Validate before execution.",
   ].join("\n");
 }
@@ -904,7 +906,9 @@ function ReplenishmentPlanner({ data }) {
               <option>Open</option><option>In Review</option><option>Approved</option><option>Deferred</option><option>Resolved</option>
             </select>
           ) },
-          { key: "rescue", label: "Rescue", render: (_, row) => <button type="button" className="tableActionButton" onClick={(event) => { event.stopPropagation(); goToRescue(row.sku_id); }}>Rescue</button> },
+          { key: "rescue", label: "Rescue", render: (_, row) => row.risk_type === "Stockout risk"
+            ? <button type="button" className="tableActionButton" onClick={(event) => { event.stopPropagation(); goToRescue(row.sku_id); }}>Rescue</button>
+            : <span className="mutedCell">Not needed</span> },
           { key: "reason", label: "Reason" },
         ]} />
       </Card>
@@ -914,7 +918,7 @@ function ReplenishmentPlanner({ data }) {
 
 function StockoutRescueRoom({ data }) {
   const { summary, risk } = data;
-  const rescueCandidates = React.useMemo(() => buildPlannerRows(summary, risk, 80).filter((row) => row.risk_type !== "Overstock risk"), [summary, risk]);
+  const rescueCandidates = React.useMemo(() => buildPlannerRows(summary, risk, 80).filter((row) => row.risk_type === "Stockout risk"), [summary, risk]);
   const savedSku = sessionStorage.getItem("selectedSku");
   const defaultSku = rescueCandidates.some((row) => row.sku_id === savedSku) ? savedSku : rescueCandidates[0]?.sku_id || summary[0]?.sku_id;
   const [sku, setSku] = React.useState(defaultSku);
@@ -930,7 +934,7 @@ function StockoutRescueRoom({ data }) {
       spent += action.cost;
     }
   });
-  const protectedRevenue = selectedActions.reduce((sum, action) => sum + Number(action.revenue_protected || 0), 0);
+  const protectedRevenue = Math.min(plan.impact.directRevenue, selectedActions.reduce((sum, action) => sum + Number(action.revenue_protected || 0), 0));
 
   const selectSku = (nextSku) => {
     const normalized = String(nextSku || "").trim().toUpperCase();
@@ -998,7 +1002,7 @@ function StockoutRescueRoom({ data }) {
         <RescueOptionCard title="Option C - Expedite Supplier" tag="lead-time compression">
           <div className="supplierRescue">
             <span>Supplier</span><strong>{plan.supplier.supplier}</strong>
-            <span>Critical SKUs</span><strong>{number(plan.supplier.critical_skus)}</strong>
+            <span>Scenario-linked SKUs</span><strong>{number(plan.supplier.scenario_skus)}</strong>
             <span>Requested lead time</span><strong>{plan.supplier.requested_lead_time}</strong>
             <span>Revenue at risk</span><strong>{money(plan.supplier.revenue_at_risk)}</strong>
           </div>
@@ -1059,6 +1063,8 @@ function ForecastDetail({ data }) {
     .filter(Boolean);
   const riskDrivers = riskDriversFor(row);
   const riskPointTotal = riskDrivers.reduce((sum, driver) => sum + driver.points, 0);
+  const topStockoutSku = summary.find((item) => item.risk_type === "Stockout risk")?.sku_id || row.sku_id;
+  const canRescueSelectedSku = row.risk_type === "Stockout risk";
   const skuForecast = forecast.filter((r) => r.sku_id === sku && r.horizon_day <= 28).sort((a, b) => a.horizon_day - b.horizon_day);
   const skuNumeric = Number(String(sku || "").replace(/\D/g, "")) || 0;
   const phase = skuNumeric % 7;
@@ -1136,7 +1142,7 @@ function ForecastDetail({ data }) {
         <KpiCard icon={BarChart3} label="Profit Proxy" value={money(row.forecast_28d_profit)} sub="Financial impact" tone="red" />
       </div>
       <div className="grid two">
-        <Card title="Why Is This SKU Risky?" tag="explainability">
+        <Card title={row.risk_type === "Healthy" ? "Decision Drivers" : "Why Is This SKU Risky?"} tag="explainability">
           <div className="driverList">
             {riskDrivers.map((driver) => <RiskDriver key={driver.label} driver={driver} />)}
           </div>
@@ -1152,7 +1158,7 @@ function ForecastDetail({ data }) {
       <Card title={chartConfig.title} tag={chartConfig.tag} className="heroChartCard">
         <DecisionBrief
           title={`${sku} replenishment decision`}
-          rows={[{ ...row, sku_id: sku, risk_type: row.forecast_28d_qty > row.last_28d_qty ? "Stockout risk" : "Watchlist", profit_at_risk_proxy: row.forecast_28d_profit, recommended_action: "Prioritize replenishment and confirm supplier availability" }]}
+          rows={[{ ...row, sku_id: sku, risk_type: row.risk_type || "Watchlist", profit_at_risk_proxy: row.profit_at_risk_proxy || 0, recommended_action: row.recommended_action || "Monitor" }]}
           filename={`${sku}-decision-brief.txt`}
           metrics={[
             { label: "28D forecast demand", value: number(row.forecast_28d_qty, 1) },
@@ -1162,10 +1168,10 @@ function ForecastDetail({ data }) {
         />
         <div className="rescueActionBar">
           <div>
-            <span>Stockout rescue workflow</span>
-            <strong>Convert this SKU risk into substitute, transfer, expedite, and budget actions.</strong>
+            <span>{canRescueSelectedSku ? "Stockout rescue workflow" : "Stockout rescue queue"}</span>
+            <strong>{canRescueSelectedSku ? "Convert this SKU risk into substitute, transfer, expedite, and budget actions." : "This SKU is not flagged as stockout risk; open the highest-priority rescue queue instead."}</strong>
           </div>
-          <button type="button" className="primaryButton" onClick={() => goToRescue(sku)}>Rescue this SKU</button>
+          <button type="button" className="primaryButton" onClick={() => goToRescue(canRescueSelectedSku ? sku : topStockoutSku)}>{canRescueSelectedSku ? "Rescue this SKU" : "Open rescue queue"}</button>
         </div>
         <ForecastChart
           height={470}

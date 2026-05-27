@@ -296,6 +296,12 @@ tr.clickableRow:hover td { background: #eaf7fa; }
   cursor: pointer;
   white-space: nowrap;
 }
+.mutedCell {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
 
 .alertMix { display: grid; gap: 18px; padding: 12px 4px; }
 .mixRow div:first-child { display: flex; justify-content: space-between; margin-bottom: 8px; }
