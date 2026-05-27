@@ -96,6 +96,7 @@ const pages = [
   { key: "risk", label: "SKU Risk Monitor", icon: ShieldCheck },
   { key: "planner", label: "Replenishment Planner", icon: ClipboardList },
   { key: "detail", label: "Forecast Detail", icon: LineChart },
+  { key: "rescue", label: "Rescue Room", icon: AlertTriangle },
   { key: "agent", label: "AI Agent", icon: Bot },
   { key: "scenario", label: "Scenario Simulator", icon: Settings2 },
 ];
@@ -120,6 +121,14 @@ function goToSkuDetail(skuId) {
   sessionStorage.setItem("selectedSku", sku);
   window.dispatchEvent(new CustomEvent("sku-search", { detail: sku }));
   window.location.hash = "detail";
+}
+
+function goToRescue(skuId) {
+  if (!skuId) return;
+  const sku = String(skuId).trim().toUpperCase();
+  sessionStorage.setItem("selectedSku", sku);
+  window.dispatchEvent(new CustomEvent("sku-search", { detail: sku }));
+  window.location.hash = "rescue";
 }
 
 function severityFor(row) {
@@ -229,6 +238,142 @@ function riskDriversFor(row) {
     },
   ];
   return drivers.map((driver) => ({ ...driver, points: Math.max(0, Math.round(driver.points)) }));
+}
+
+function skuSeed(skuId) {
+  return String(skuId || "").split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+}
+
+function rescueRowForSku(summary, risk, skuId) {
+  const summaryRow = summary.find((row) => row.sku_id === skuId) || summary[0];
+  const riskRow = risk.find((row) => row.sku_id === skuId) || summaryRow;
+  return { ...summaryRow, ...riskRow };
+}
+
+function buildRescuePlan(row, summary) {
+  const seed = skuSeed(row.sku_id);
+  const warehouses = ["Hanoi", "Da Nang", "Hai Phong", "HCMC"];
+  const suppliers = ["Supplier A", "Supplier B", "Supplier C"];
+  const bundles = ["Brake replacement", "Suspension repair", "Oil service", "Transmission service", "Cooling system repair"];
+  const models = ["Toyota Vios", "Ford Ranger", "Hyundai Accent", "Kia K3", "Mazda CX-5", "Honda City", "Mitsubishi Xpander"];
+  const cyclePick = (items, start, count) => Array.from({ length: count }, (_, index) => items[(start + index) % items.length]);
+  const unitPrice = Number(row.unit_price_proxy || row.forecast_28d_revenue / Math.max(row.forecast_28d_qty, 1) || 0);
+  const unitCost = Number(row.unit_cost_proxy || unitPrice * 0.62 || 0);
+  const forecastDemand = Number(row.forecast_28d_qty || 0);
+  const assumedStock = Number(row.current_stock_assumed || 0);
+  const reorderGap = Math.max(Number(row.reorder_point || 0) - assumedStock, 0);
+  const unfulfilled = Math.max(reorderGap, Number(row.suggested_order_qty || 0) * 0.35, forecastDemand - assumedStock);
+  const directRevenue = Math.max(Number(row.revenue_at_risk_proxy || 0), unfulfilled * unitPrice);
+  const bundleMultiplier = 1.55 + (seed % 45) / 100;
+  const affectedBundles = 2 + (seed % 3);
+  const affectedModels = 3 + (seed % 4);
+  const candidates = summary
+    .filter((item) => item.sku_id !== row.sku_id)
+    .sort((a, b) => Math.abs(skuSeed(a.sku_id) - seed) - Math.abs(skuSeed(b.sku_id) - seed))
+    .slice(0, 3);
+  const substitutes = candidates.map((item, index) => {
+    const compatibility = Math.max(72, 96 - index * 8 - (seed % 5));
+    const availableStock = Math.max(12, Math.round(Number(item.current_stock_assumed || item.forecast_28d_qty * 0.4 || 0) + 12 + (seed % 17)));
+    const recoveredUnits = Math.min(availableStock, Math.round(unfulfilled * (compatibility / 100)));
+    return {
+      sku_id: item.sku_id,
+      compatibility,
+      available_stock: availableStock,
+      revenue_recovered: recoveredUnits * unitPrice,
+      risk: compatibility >= 90 ? "Low" : compatibility >= 82 ? "Medium" : "High",
+    };
+  });
+  const transfers = [0, 1].map((index) => {
+    const from = warehouses[(seed + index) % warehouses.length];
+    const to = warehouses[(seed + 2) % warehouses.length];
+    const transferQty = Math.max(8, Math.round(Math.min(unfulfilled, 18 + (seed % 23) + index * 9)));
+    return {
+      from,
+      to: from === to ? warehouses[(seed + 3) % warehouses.length] : to,
+      transfer_qty: transferQty,
+      revenue_protected: transferQty * unitPrice,
+      overstock_reduced: index === 0 ? "Yes" : seed % 2 === 0 ? "Yes" : "No",
+    };
+  });
+  const supplier = {
+    supplier: suppliers[seed % suppliers.length],
+    critical_skus: 8 + (seed % 9),
+    requested_lead_time: `${Number(row.lead_time_days || 14)}d -> 7d`,
+    revenue_at_risk: directRevenue,
+    expedite_qty: Math.max(10, Math.round(Number(row.suggested_order_qty || unfulfilled || 0))),
+  };
+  const rescueActions = [
+    {
+      rank: 1,
+      sku_id: row.sku_id,
+      action: "Branch transfer",
+      cost: transfers[0].transfer_qty * Math.max(50000, unitCost * 0.06),
+      revenue_protected: transfers[0].revenue_protected,
+      decision_score: 94,
+    },
+    {
+      rank: 2,
+      sku_id: substitutes[0]?.sku_id || row.sku_id,
+      action: "Substitute part",
+      cost: 0,
+      revenue_protected: substitutes[0]?.revenue_recovered || 0,
+      decision_score: 91,
+    },
+    {
+      rank: 3,
+      sku_id: row.sku_id,
+      action: "Expedite supplier",
+      cost: supplier.expedite_qty * unitCost * 0.18,
+      revenue_protected: Math.min(directRevenue, supplier.expedite_qty * unitPrice),
+      decision_score: 88,
+    },
+    {
+      rank: 4,
+      sku_id: row.sku_id,
+      action: "Partial reorder",
+      cost: Math.max(0, Number(row.suggested_order_qty || 0)) * unitCost,
+      revenue_protected: Math.min(directRevenue, Math.max(0, Number(row.suggested_order_qty || 0)) * unitPrice),
+      decision_score: 82,
+    },
+  ].map((action) => ({
+    ...action,
+    roi: action.cost > 0 ? action.revenue_protected / action.cost : 99,
+  }));
+  return {
+    impact: {
+      forecastDemand,
+      assumedStock,
+      unfulfilled,
+      directRevenue,
+      bundleRevenue: directRevenue * bundleMultiplier,
+      affectedBundles,
+      affectedModels,
+      severity: severityFor(row),
+      serviceBundles: cyclePick(bundles, seed % bundles.length, affectedBundles),
+      vehicleModels: cyclePick(models, seed % models.length, affectedModels),
+    },
+    substitutes,
+    transfers,
+    supplier,
+    rescueActions,
+  };
+}
+
+function rescueBriefText(row, plan, selectedActions) {
+  const topActions = selectedActions.length ? selectedActions : plan.rescueActions.slice(0, 3);
+  return [
+    `Stockout Rescue Plan: ${row.sku_id}`,
+    "",
+    `Finding: ${row.sku_id} is at ${plan.impact.severity} stockout rescue priority.`,
+    `Evidence: forecast demand ${number(plan.impact.forecastDemand, 1)} units, assumed stock ${number(plan.impact.assumedStock, 1)} units, unfulfilled demand ${number(plan.impact.unfulfilled, 1)} units.`,
+    `Business impact: direct revenue at risk ${money(plan.impact.directRevenue)}, bundle revenue at risk ${money(plan.impact.bundleRevenue)}, affected bundles ${plan.impact.affectedBundles}, affected vehicle models ${plan.impact.affectedModels}.`,
+    "",
+    "Recommended rescue actions:",
+    ...topActions.map((action, index) => `${index + 1}. ${action.action} | Cost ${money(action.cost)} | Revenue protected ${money(action.revenue_protected)} | Score ${number(action.decision_score)}`),
+    "",
+    `Supplier action: ask ${plan.supplier.supplier} to compress lead time to ${plan.supplier.requested_lead_time} for ${number(plan.supplier.expedite_qty)} units.`,
+    "Guardrail: substitute compatibility, warehouse stock, and supplier lead time are scenario assumptions for demo. Validate before execution.",
+  ].join("\n");
 }
 
 function briefText({ title, rows, metrics = [] }) {
@@ -759,11 +904,142 @@ function ReplenishmentPlanner({ data }) {
               <option>Open</option><option>In Review</option><option>Approved</option><option>Deferred</option><option>Resolved</option>
             </select>
           ) },
+          { key: "rescue", label: "Rescue", render: (_, row) => <button type="button" className="tableActionButton" onClick={(event) => { event.stopPropagation(); goToRescue(row.sku_id); }}>Rescue</button> },
           { key: "reason", label: "Reason" },
         ]} />
       </Card>
     </>
   );
+}
+
+function StockoutRescueRoom({ data }) {
+  const { summary, risk } = data;
+  const rescueCandidates = React.useMemo(() => buildPlannerRows(summary, risk, 80).filter((row) => row.risk_type !== "Overstock risk"), [summary, risk]);
+  const savedSku = sessionStorage.getItem("selectedSku");
+  const defaultSku = rescueCandidates.some((row) => row.sku_id === savedSku) ? savedSku : rescueCandidates[0]?.sku_id || summary[0]?.sku_id;
+  const [sku, setSku] = React.useState(defaultSku);
+  const [budget, setBudget] = React.useState(50_000_000);
+  const [approved, setApproved] = React.useState(false);
+  const row = rescueRowForSku(summary, risk, sku);
+  const plan = React.useMemo(() => buildRescuePlan(row, summary), [row, summary]);
+  const selectedActions = [];
+  let spent = 0;
+  [...plan.rescueActions].sort((a, b) => b.decision_score - a.decision_score).forEach((action) => {
+    if (action.cost === 0 || spent + action.cost <= budget) {
+      selectedActions.push(action);
+      spent += action.cost;
+    }
+  });
+  const protectedRevenue = selectedActions.reduce((sum, action) => sum + Number(action.revenue_protected || 0), 0);
+
+  const selectSku = (nextSku) => {
+    const normalized = String(nextSku || "").trim().toUpperCase();
+    setSku(normalized);
+    sessionStorage.setItem("selectedSku", normalized);
+    window.dispatchEvent(new CustomEvent("sku-search", { detail: normalized }));
+  };
+
+  const brief = rescueBriefText(row, plan, selectedActions);
+  const supplierEmail = [
+    `Subject: Expedite request for ${row.sku_id}`,
+    "",
+    `Hi ${plan.supplier.supplier},`,
+    "",
+    `We are reviewing a stockout rescue plan for ${row.sku_id}. Please confirm whether ${number(plan.supplier.expedite_qty)} units can be expedited under the requested lead time ${plan.supplier.requested_lead_time}.`,
+    "",
+    `Current scenario impact: ${money(plan.impact.directRevenue)} direct revenue at risk and ${money(plan.impact.bundleRevenue)} bundle revenue at risk.`,
+    "",
+    "Please confirm availability, earliest ship date, and any expedite premium.",
+  ].join("\n");
+
+  return (
+    <>
+      <TopHeader pageTitle="Stockout Rescue Room" subtitle="Turn a critical SKU risk signal into a rescue plan: substitute, transfer, expedite, and budget-prioritize actions." />
+      <Card title="Rescue Target" tag="critical SKU">
+        <div className="filterRow twoCols">
+          <label>SKU to rescue<select value={sku} onChange={(event) => selectSku(event.target.value)}>{rescueCandidates.map((item) => <option key={item.sku_id}>{item.sku_id}</option>)}</select></label>
+          <label>Available rescue budget (VND)<input value={budget} onChange={(event) => setBudget(Number(event.target.value || 0))} /></label>
+        </div>
+      </Card>
+      <div className="kpiGrid four">
+        <KpiCard icon={AlertTriangle} label="Severity" value={plan.impact.severity} sub="Rescue priority" tone="red" />
+        <KpiCard icon={Boxes} label="Unfulfilled Demand" value={number(plan.impact.unfulfilled, 1)} sub="Scenario units" tone="amber" />
+        <KpiCard icon={DollarSign} label="Direct Revenue Risk" value={money(plan.impact.directRevenue)} sub="SKU-level risk" tone="green" />
+        <KpiCard icon={BarChart3} label="Bundle Revenue Risk" value={money(plan.impact.bundleRevenue)} sub="Service impact" tone="red" />
+      </div>
+      <Card title="Impact: What Breaks If This SKU Stocks Out?" tag="service bundle risk">
+        <div className="rescueImpactGrid">
+          <ImpactTile label="Forecast demand" value={number(plan.impact.forecastDemand, 1)} />
+          <ImpactTile label="Assumed stock" value={number(plan.impact.assumedStock, 1)} />
+          <ImpactTile label="Affected bundles" value={number(plan.impact.affectedBundles)} detail={plan.impact.serviceBundles.join(", ")} />
+          <ImpactTile label="Affected vehicle models" value={number(plan.impact.affectedModels)} detail={plan.impact.vehicleModels.join(", ")} />
+        </div>
+        <p className="agentNote">Bundle and vehicle impact are deterministic scenario assumptions derived from SKU ID for demo storytelling. Validate against real catalog compatibility before execution.</p>
+      </Card>
+      <div className="grid three">
+        <RescueOptionCard title="Option A - Substitute Part" tag="compatibility match">
+          <DataTable rows={plan.substitutes} limit={3} columns={[
+            { key: "sku_id", label: "Substitute SKU" },
+            { key: "compatibility", label: "Compatibility", render: (value) => `${number(value)}%` },
+            { key: "available_stock", label: "Available Stock", render: (value) => number(value, 1) },
+            { key: "revenue_recovered", label: "Revenue Recovered", render: money },
+            { key: "risk", label: "Risk" },
+          ]} />
+        </RescueOptionCard>
+        <RescueOptionCard title="Option B - Branch Transfer" tag="rebalance stock">
+          <DataTable rows={plan.transfers} limit={2} columns={[
+            { key: "from", label: "From" },
+            { key: "to", label: "To" },
+            { key: "transfer_qty", label: "Transfer Qty", render: (value) => number(value, 1) },
+            { key: "revenue_protected", label: "Revenue Protected", render: money },
+            { key: "overstock_reduced", label: "Overstock Reduced" },
+          ]} />
+        </RescueOptionCard>
+        <RescueOptionCard title="Option C - Expedite Supplier" tag="lead-time compression">
+          <div className="supplierRescue">
+            <span>Supplier</span><strong>{plan.supplier.supplier}</strong>
+            <span>Critical SKUs</span><strong>{number(plan.supplier.critical_skus)}</strong>
+            <span>Requested lead time</span><strong>{plan.supplier.requested_lead_time}</strong>
+            <span>Revenue at risk</span><strong>{money(plan.supplier.revenue_at_risk)}</strong>
+          </div>
+        </RescueOptionCard>
+      </div>
+      <Card title="Budget Optimizer" tag="highest impact rescue mix">
+        <div className="scenarioInsight">
+          <strong>With {money(budget)} rescue budget, the selected plan protects {money(protectedRevenue)} revenue using {number(selectedActions.length)} prioritized actions.</strong>
+          <span>Actions are ranked by revenue protected, estimated cost, and severity. Cost is a scenario proxy, not accounting data.</span>
+        </div>
+        <DataTable rows={plan.rescueActions} limit={plan.rescueActions.length} columns={[
+          { key: "rank", label: "Rank", render: (value) => number(value) },
+          { key: "sku_id", label: "SKU" },
+          { key: "action", label: "Action" },
+          { key: "cost", label: "Cost", render: money },
+          { key: "revenue_protected", label: "Revenue Protected", render: money },
+          { key: "decision_score", label: "Decision Score", render: (value) => number(value) },
+          { key: "roi", label: "ROI Proxy", render: (value) => value >= 99 ? "No-cost" : `${number(value, 1)}x` },
+        ]} />
+      </Card>
+      <Card title="AI Copilot Action Brief" tag={approved ? "approved" : "ready for approval"}>
+        <div className="rescueBriefBox">
+          <pre>{brief}</pre>
+          <div className="rescueBriefActions">
+            <button type="button" className="primaryButton" onClick={() => downloadText(`${row.sku_id}-manager-brief.txt`, brief)}>Generate manager brief</button>
+            <button type="button" className="primaryButton" onClick={() => downloadText(`${row.sku_id}-supplier-email.txt`, supplierEmail)}>Generate supplier email</button>
+            <button type="button" className="primaryButton" onClick={() => downloadText(`${row.sku_id}-rescue-plan.txt`, brief)}>Export rescue plan</button>
+            <button type="button" className="primaryButton" onClick={() => setApproved(true)}>{approved ? "Approved" : "Mark as approved"}</button>
+          </div>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+function ImpactTile({ label, value, detail }) {
+  return <div className="impactTile"><span>{label}</span><strong>{value}</strong>{detail ? <p>{detail}</p> : null}</div>;
+}
+
+function RescueOptionCard({ title, tag, children }) {
+  return <Card title={title} tag={tag} className="rescueOptionCard">{children}</Card>;
 }
 
 function ForecastDetail({ data }) {
@@ -884,6 +1160,13 @@ function ForecastDetail({ data }) {
             { label: "Profit proxy", value: money(row.forecast_28d_profit) },
           ]}
         />
+        <div className="rescueActionBar">
+          <div>
+            <span>Stockout rescue workflow</span>
+            <strong>Convert this SKU risk into substitute, transfer, expedite, and budget actions.</strong>
+          </div>
+          <button type="button" className="primaryButton" onClick={() => goToRescue(sku)}>Rescue this SKU</button>
+        </div>
         <ForecastChart
           height={470}
           yLabel="Daily quantity"
@@ -1102,6 +1385,15 @@ const scenarioComparisonColumns = [
   { key: "delta_vs_baseline", label: "Revenue Delta", render: money },
 ];
 
+const rescueActionColumns = [
+  { key: "rank", label: "Rank", render: (value) => number(value) },
+  { key: "sku_id", label: "SKU" },
+  { key: "action", label: "Rescue Action" },
+  { key: "cost", label: "Cost", render: money },
+  { key: "revenue_protected", label: "Revenue Protected", render: money },
+  { key: "decision_score", label: "Score", render: (value) => number(value) },
+];
+
 function buildAgentAnswer(question, summary, risk, selectedSku = "") {
   if (!question) return null;
   const q = normalizeQuery(question);
@@ -1119,6 +1411,7 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
   const asksBudget = hasAny(q, ["budget", "limited", "gioi han", "uu tien", "priority", "prioritize", "nhap gap", "nhap them", "mua them", "logistics", "this week", "tuan nay"]);
   const asksStockout = hasAny(q, ["stockout", "thieu hang", "het hang", "replenishment", "reorder", "nhap hang", "nhap them", "mua them"]);
   const asksActionPlan = hasAny(q, ["action plan", "create plan", "replenishment plan", "ke hoach", "planner", "approve order"]);
+  const asksRescue = hasAny(q, ["rescue", "stockout rescue", "save revenue", "substitute", "branch transfer", "expedite supplier", "cuu sku", "cuu doanh thu"]);
   const asksExplain = hasAny(q, ["explain", "why", "tai sao", "vi sao", "critical", "risky", "rui ro"]);
   const asksScenarioCompare = hasAny(q, ["compare scenario", "baseline vs", "so sanh kich ban", "scenario comparison"]);
   const asksExecutive = hasAny(q, ["executive summary", "board summary", "management summary", "summary for this week", "tom tat"]);
@@ -1185,6 +1478,25 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
       rows,
       columns: scenarioComparisonColumns,
       note: "Scenario comparison is rule-based and uses assumed lead time, safety stock, and forecast demand.",
+    };
+  }
+
+  if (asksRescue) {
+    const targetSku = skuSummary?.sku_id || topBy(stockoutRows, "profit_at_risk_proxy", 1)[0]?.sku_id || summary[0]?.sku_id;
+    const targetRow = rescueRowForSku(summary, risk, targetSku);
+    const plan = buildRescuePlan(targetRow, summary);
+    return {
+      intent: "Stockout rescue action mode",
+      summary: `${targetSku} rescue plan: protect ${money(plan.impact.directRevenue)} direct revenue and ${money(plan.impact.bundleRevenue)} bundle revenue by combining transfer, substitute, and supplier expedite actions.`,
+      metrics: [
+        { label: "Unfulfilled demand", value: number(plan.impact.unfulfilled, 1) },
+        { label: "Affected bundles", value: number(plan.impact.affectedBundles) },
+        { label: "Best score", value: number(plan.rescueActions[0]?.decision_score || 0) },
+      ],
+      actions: ["Open Stockout Rescue Room", "Validate substitute compatibility", "Confirm branch stock and supplier lead time"],
+      rows: plan.rescueActions,
+      columns: rescueActionColumns,
+      note: "Rescue options are scenario assumptions. Validate substitute, branch stock, and supplier commitment before execution.",
     };
   }
 
@@ -1586,6 +1898,11 @@ function FloatingCopilot({ data, setActive }) {
       goToSkuDetail(firstSku);
       return;
     }
+    if (target === "rescue" && firstSku) {
+      setOpen(false);
+      goToRescue(firstSku);
+      return;
+    }
     setOpen(false);
     setActive(target);
   };
@@ -1630,6 +1947,7 @@ function FloatingCopilot({ data, setActive }) {
                   </div>
                   <div className="aiQuickActions">
                     <button type="button" onClick={() => runQuickAction("detail")}>Open SKU Detail</button>
+                    <button type="button" onClick={() => runQuickAction("rescue")}>Rescue SKU</button>
                     <button type="button" onClick={() => runQuickAction("planner")}>Open Planner</button>
                     <button type="button" onClick={() => runQuickAction("risk")}>View Risk Queue</button>
                     <button type="button" onClick={() => runQuickAction("scenario")}>Run Scenario</button>
@@ -1697,6 +2015,7 @@ function App() {
     risk: <RiskMonitor data={data} />,
     planner: <ReplenishmentPlanner data={data} />,
     detail: <ForecastDetail data={data} />,
+    rescue: <StockoutRescueRoom data={data} />,
     agent: <Agent data={data} />,
     scenario: <Scenario data={data} />,
   }[active];
