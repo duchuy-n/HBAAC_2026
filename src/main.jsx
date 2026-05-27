@@ -99,14 +99,6 @@ const pages = [
   { key: "scenario", label: "Scenario Simulator", icon: Settings2 },
 ];
 
-const demoSteps = [
-  { key: "dashboard", title: "Control Tower", line: "Start with operating KPIs and the priority action queue." },
-  { key: "risk", title: "Risk Monitor", line: "Rank SKUs by stockout, overstock, and financial exposure." },
-  { key: "detail", title: "SKU Drilldown", line: "Inspect one SKU forecast and its revenue/profit impact." },
-  { key: "agent", title: "Decision Copilot", line: "Turn a business question into an operating brief." },
-  { key: "scenario", title: "Scenario Simulator", line: "Stress-test lead time, safety stock, and demand uplift." },
-];
-
 const riskLabel = {
   "Stockout risk": "Stockout risk",
   "Overstock risk": "Overstock risk",
@@ -1223,37 +1215,6 @@ function calculateScenario(summary, lead, safety, uplift) {
   });
 }
 
-function DemoDock({ active, demoIndex, setDemoIndex, setActive }) {
-  const isRunning = demoIndex >= 0;
-  const currentIndex = isRunning ? demoIndex : Math.max(0, demoSteps.findIndex((step) => step.key === active));
-  const current = demoSteps[currentIndex] || demoSteps[0];
-  const startDemo = () => {
-    setDemoIndex(0);
-    setActive(demoSteps[0].key);
-  };
-  const nextStep = () => {
-    const next = Math.min(currentIndex + 1, demoSteps.length - 1);
-    setDemoIndex(next);
-    setActive(demoSteps[next].key);
-  };
-  const stopDemo = () => setDemoIndex(-1);
-
-  return (
-    <div className={`demoDock ${isRunning ? "running" : ""}`}>
-      <div>
-        <span>{isRunning ? `Pitch step ${currentIndex + 1}/${demoSteps.length}` : "Pitch mode"}</span>
-        <strong>{isRunning ? current.title : "Guided product demo"}</strong>
-        <p>{isRunning ? current.line : "Walk through dashboard, risk, SKU detail, agent, and scenario in order."}</p>
-      </div>
-      <div className="demoActions">
-        {!isRunning ? <button type="button" onClick={startDemo}>Start Demo</button> : null}
-        {isRunning && currentIndex < demoSteps.length - 1 ? <button type="button" onClick={nextStep}>Next</button> : null}
-        {isRunning ? <button type="button" className="ghostButton" onClick={stopDemo}>End</button> : null}
-      </div>
-    </div>
-  );
-}
-
 function FloatingCopilot({ data, setActive }) {
   const { summary, risk } = data;
   const [open, setOpen] = React.useState(false);
@@ -1365,20 +1326,17 @@ function App() {
     return pages.some((page) => page.key === key) ? key : "dashboard";
   };
   const [active, setActiveState] = React.useState(getInitialPage);
-  const [demoIndex, setDemoIndex] = React.useState(-1);
 
   React.useEffect(() => {
     const onHashChange = () => {
       const key = window.location.hash.replace("#", "");
       if (pages.some((page) => page.key === key)) {
         setActiveState(key);
-        const index = demoSteps.findIndex((step) => step.key === key);
-        if (demoIndex >= 0 && index >= 0) setDemoIndex(index);
       }
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
-  }, [demoIndex]);
+  }, []);
 
   const setActive = (key) => {
     setActiveState(key);
@@ -1404,8 +1362,7 @@ function App() {
   return (
     <div className="appShell">
       <Sidebar active={active} setActive={setActive} summary={data.summary} risk={data.risk} forecast={data.forecast} />
-      <main className={demoIndex >= 0 ? "demoActive" : ""}>{page}</main>
-      <DemoDock active={active} demoIndex={demoIndex} setDemoIndex={setDemoIndex} setActive={setActive} />
+      <main>{page}</main>
       <FloatingCopilot data={data} setActive={setActive} />
     </div>
   );
