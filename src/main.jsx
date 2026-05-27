@@ -94,6 +94,7 @@ const pages = [
   { key: "dashboard", label: "Dashboard", icon: Gauge },
   { key: "engine", label: "Forecast Engine", icon: Factory },
   { key: "risk", label: "SKU Risk Monitor", icon: ShieldCheck },
+  { key: "planner", label: "Replenishment Planner", icon: ClipboardList },
   { key: "detail", label: "Forecast Detail", icon: LineChart },
   { key: "agent", label: "AI Agent", icon: Bot },
   { key: "scenario", label: "Scenario Simulator", icon: Settings2 },
@@ -128,6 +129,106 @@ function severityFor(row) {
   if (riskScore >= 35 || profit >= 1_500_000) return "Critical";
   if (riskScore >= 20 || profit >= 500_000) return "High";
   return row.risk_type === "Healthy" ? "Watchlist" : "Watchlist";
+}
+
+function urgencyFor(row) {
+  const severity = severityFor(row);
+  const order = Number(row.suggested_order_qty || 0);
+  const profit = Number(row.profit_at_risk_proxy || row.forecast_28d_profit || 0);
+  if (severity === "Critical" || order >= 100 || profit >= 1_500_000) return "High";
+  if (severity === "High" || order >= 25 || profit >= 500_000) return "Medium";
+  return row.risk_type === "Overstock risk" ? "Medium" : "Low";
+}
+
+function expectedStockoutDate(row, baseDate = "2026-10-03") {
+  if (row.risk_type !== "Stockout risk") return "Not projected";
+  const daily = Number(row.forecast_daily_avg || row.forecast_28d_qty / 28 || 0);
+  const stock = Number(row.current_stock_assumed || 0);
+  if (daily <= 0) return "Not projected";
+  const days = Math.max(1, Math.ceil(stock / daily));
+  const date = new Date(`${baseDate}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+}
+
+function plannerReason(row) {
+  if (row.risk_type === "Overstock risk") return "Assumed stock is high versus forecast demand; slow purchase orders and review promotion or bundling.";
+  if (Number(row.current_stock_assumed || 0) < Number(row.reorder_point || 0)) return "Assumed stock is below reorder point while forecast demand remains material.";
+  if (Number(row.suggested_order_qty || 0) > 0) return "Forecast coverage indicates a replenishment gap within the next 28 days.";
+  return "Monitor forecast movement and validate real stock before committing action.";
+}
+
+function leadTimeImpact(row) {
+  if (row.risk_type === "Overstock risk") return "Purchase slowdown recommended";
+  const stockout = expectedStockoutDate(row);
+  if (stockout === "Not projected") return "No immediate shortage projected";
+  const lead = Number(row.lead_time_days || 7);
+  return lead >= 14 ? "Supplier delay may miss coverage window" : "Replenishment can still protect coverage";
+}
+
+function buildPlannerRows(summary, risk, limit = 40) {
+  const riskBySku = new Map(risk.map((row) => [row.sku_id, row]));
+  return [...summary]
+    .map((row) => {
+      const riskRow = riskBySku.get(row.sku_id) || row;
+      const merged = { ...row, ...riskRow };
+      return {
+        ...merged,
+        urgency: urgencyFor(merged),
+        owner: merged.risk_type === "Overstock risk" ? "Sales Ops" : "Inventory Lead",
+        status: "Open",
+        due_date: urgencyFor(merged) === "High" ? "Next 48h" : urgencyFor(merged) === "Medium" ? "This week" : "Monitor",
+        expected_stockout_date: expectedStockoutDate(merged),
+        lead_time_impact: leadTimeImpact(merged),
+        reason: plannerReason(merged),
+        business_impact: Number(merged.profit_at_risk_proxy || merged.forecast_28d_profit || 0),
+      };
+    })
+    .filter((row) => row.risk_type !== "Healthy" || Number(row.suggested_order_qty || 0) > 0)
+    .sort((a, b) => {
+      const score = { High: 3, Medium: 2, Low: 1 };
+      return (score[b.urgency] - score[a.urgency]) || Number(b.business_impact || 0) - Number(a.business_impact || 0);
+    })
+    .slice(0, limit);
+}
+
+function riskDriversFor(row) {
+  const stockGap = Math.max(Number(row.reorder_point || 0) - Number(row.current_stock_assumed || 0), 0);
+  const demandChange = Math.max(Number(row.demand_change_pct || 0), 0);
+  const profit = Number(row.profit_at_risk_proxy || row.forecast_28d_profit || 0);
+  const orderQty = Number(row.suggested_order_qty || 0);
+  const maxProfit = 2_000_000;
+  const drivers = [
+    {
+      label: "Stock below reorder point",
+      value: stockGap,
+      points: Math.min(35, stockGap > 0 ? 15 + stockGap / Math.max(Number(row.reorder_point || 1), 1) * 20 : 0),
+      detail: stockGap > 0 ? `${number(stockGap, 1)} units gap` : "No reorder gap",
+      tone: "red",
+    },
+    {
+      label: "Forecast demand acceleration",
+      value: demandChange,
+      points: Math.min(25, demandChange / 2),
+      detail: `${number(row.demand_change_pct || 0, 1)}% vs last 28D`,
+      tone: "amber",
+    },
+    {
+      label: "Profit exposure",
+      value: profit,
+      points: Math.min(25, (profit / maxProfit) * 25),
+      detail: money(profit),
+      tone: "green",
+    },
+    {
+      label: "Suggested replenishment size",
+      value: orderQty,
+      points: Math.min(15, orderQty / 10),
+      detail: `${number(orderQty, 1)} units`,
+      tone: "cyan",
+    },
+  ];
+  return drivers.map((driver) => ({ ...driver, points: Math.max(0, Math.round(driver.points)) }));
 }
 
 function briefText({ title, rows, metrics = [] }) {
@@ -609,6 +710,62 @@ function RiskScore({ value }) {
   return <div className="riskScore"><span><i style={{ width: `${Math.min(Number(value), 100)}%` }} /></span><strong>{number(value, 1)}</strong></div>;
 }
 
+function ReplenishmentPlanner({ data }) {
+  const { summary, risk } = data;
+  const baseRows = React.useMemo(() => buildPlannerRows(summary, risk, 60), [summary, risk]);
+  const [statusBySku, setStatusBySku] = React.useState({});
+  const [filter, setFilter] = React.useState("All");
+  const [owner, setOwner] = React.useState("All");
+  const rows = baseRows
+    .map((row) => ({ ...row, status: statusBySku[row.sku_id] || row.status }))
+    .filter((row) => filter === "All" || row.urgency === filter)
+    .filter((row) => owner === "All" || row.owner === owner);
+  const high = rows.filter((row) => row.urgency === "High");
+  const protectedProfit = rows.reduce((sum, row) => sum + Number(row.business_impact || 0), 0);
+  const suggestedQty = rows.reduce((sum, row) => sum + Number(row.suggested_order_qty || 0), 0);
+
+  const setStatus = (skuId, status) => {
+    setStatusBySku((current) => ({ ...current, [skuId]: status }));
+  };
+
+  return (
+    <>
+      <TopHeader pageTitle="Replenishment Action Planner" subtitle="Convert forecast risk signals into an operating plan for replenishment, review, and inventory control." />
+      <div className="kpiGrid four">
+        <KpiCard icon={ClipboardList} label="Action Items" value={number(rows.length)} sub="Visible plan" />
+        <KpiCard icon={AlertTriangle} label="High Urgency" value={number(high.length)} sub="Needs fast review" tone="red" />
+        <KpiCard icon={Boxes} label="Suggested Order Qty" value={number(suggestedQty, 1)} sub="Scenario-based" tone="cyan" />
+        <KpiCard icon={DollarSign} label="Profit Protected" value={shortMoney(protectedProfit)} sub="Proxy impact" tone="green" />
+      </div>
+      <Card title="Planner Controls" tag="workflow filters">
+        <div className="filterRow twoCols">
+          <label>Urgency<select value={filter} onChange={(event) => setFilter(event.target.value)}><option>All</option><option>High</option><option>Medium</option><option>Low</option></select></label>
+          <label>Owner<select value={owner} onChange={(event) => setOwner(event.target.value)}><option>All</option><option>Inventory Lead</option><option>Sales Ops</option></select></label>
+        </div>
+      </Card>
+      <Card title="Replenishment Action Plan" tag="approve, defer, or review">
+        <DataTable rows={rows} limit={rows.length} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
+          { key: "sku_id", label: "SKU" },
+          { key: "urgency", label: "Urgency", render: (value) => <span className={`urgencyBadge ${String(value).toLowerCase()}`}>{value}</span> },
+          { key: "risk_type", label: "Alert", render: (value) => <RiskBadge type={value} /> },
+          { key: "suggested_order_qty", label: "Suggested Order", render: (value) => number(value, 1) },
+          { key: "expected_stockout_date", label: "Expected Stockout", render: (value) => value },
+          { key: "lead_time_impact", label: "Lead Time Impact" },
+          { key: "business_impact", label: "Profit Protected", render: money },
+          { key: "owner", label: "Owner" },
+          { key: "due_date", label: "Due" },
+          { key: "status", label: "Status", render: (value, row) => (
+            <select className="statusSelect" value={value} onClick={(event) => event.stopPropagation()} onChange={(event) => setStatus(row.sku_id, event.target.value)}>
+              <option>Open</option><option>In Review</option><option>Approved</option><option>Deferred</option><option>Resolved</option>
+            </select>
+          ) },
+          { key: "reason", label: "Reason" },
+        ]} />
+      </Card>
+    </>
+  );
+}
+
 function ForecastDetail({ data }) {
   const { summary, forecast } = data;
   const top = [...summary].sort((a, b) => b.forecast_28d_profit - a.forecast_28d_profit).slice(0, 100);
@@ -624,6 +781,8 @@ function ForecastDetail({ data }) {
     .filter((item, index, arr) => arr.indexOf(item) === index)
     .map((id) => summary.find((item) => item.sku_id === id))
     .filter(Boolean);
+  const riskDrivers = riskDriversFor(row);
+  const riskPointTotal = riskDrivers.reduce((sum, driver) => sum + driver.points, 0);
   const skuForecast = forecast.filter((r) => r.sku_id === sku && r.horizon_day <= 28).sort((a, b) => a.horizon_day - b.horizon_day);
   const skuNumeric = Number(String(sku || "").replace(/\D/g, "")) || 0;
   const phase = skuNumeric % 7;
@@ -700,6 +859,20 @@ function ForecastDetail({ data }) {
         <KpiCard icon={DollarSign} label="Estimated Revenue" value={money(row.forecast_28d_revenue)} sub="Financial impact" tone="green" />
         <KpiCard icon={BarChart3} label="Profit Proxy" value={money(row.forecast_28d_profit)} sub="Financial impact" tone="red" />
       </div>
+      <div className="grid two">
+        <Card title="Why Is This SKU Risky?" tag="explainability">
+          <div className="driverList">
+            {riskDrivers.map((driver) => <RiskDriver key={driver.label} driver={driver} />)}
+          </div>
+        </Card>
+        <Card title="Decision Readiness" tag="action rationale">
+          <div className="readinessPanel">
+            <div><span>Risk points explained</span><strong>{number(riskPointTotal)}</strong><p>Rule-based breakdown from forecast demand, stock assumptions, and financial exposure.</p></div>
+            <div><span>Expected stockout</span><strong>{expectedStockoutDate(row)}</strong><p>{leadTimeImpact(row)}</p></div>
+            <div><span>Planner reason</span><strong>{urgencyFor(row)} urgency</strong><p>{plannerReason(row)}</p></div>
+          </div>
+        </Card>
+      </div>
       <Card title={chartConfig.title} tag={chartConfig.tag} className="heroChartCard">
         <DecisionBrief
           title={`${sku} replenishment decision`}
@@ -775,6 +948,19 @@ function CompareMetric({ label, value, raw, max, tone = "cyan" }) {
     <div className={`compareMetric ${tone}`}>
       <div><span>{label}</span><strong>{value}</strong></div>
       <i><b style={{ width: `${width}%` }} /></i>
+    </div>
+  );
+}
+
+function RiskDriver({ driver }) {
+  return (
+    <div className={`riskDriver ${driver.tone}`}>
+      <div>
+        <span>{driver.label}</span>
+        <strong>{driver.points} pts</strong>
+      </div>
+      <i><b style={{ width: `${Math.min(driver.points, 40) * 2.5}%` }} /></i>
+      <p>{driver.detail}</p>
     </div>
   );
 }
@@ -896,6 +1082,26 @@ const dataGovernanceColumns = [
   { key: "guardrail", label: "Guardrail" },
 ];
 
+const plannerColumns = [
+  { key: "sku_id", label: "SKU" },
+  { key: "urgency", label: "Urgency", render: (value) => <span className={`urgencyBadge ${String(value).toLowerCase()}`}>{value}</span> },
+  { key: "risk_type", label: "Alert", render: (value) => <RiskBadge type={value} /> },
+  { key: "suggested_order_qty", label: "Suggested Order", render: (value) => number(value, 1) },
+  { key: "expected_stockout_date", label: "Expected Stockout" },
+  { key: "business_impact", label: "Profit Protected", render: money },
+  { key: "owner", label: "Owner" },
+  { key: "reason", label: "Reason" },
+];
+
+const scenarioComparisonColumns = [
+  { key: "name", label: "Scenario" },
+  { key: "lead_time", label: "Lead Time", render: (value) => `${value}D` },
+  { key: "demand_uplift", label: "Demand Uplift", render: (value) => `${value > 0 ? "+" : ""}${value}%` },
+  { key: "stockout_count", label: "Stockout SKUs", render: number },
+  { key: "revenue_at_risk", label: "Revenue at Risk", render: money },
+  { key: "delta_vs_baseline", label: "Revenue Delta", render: money },
+];
+
 function buildAgentAnswer(question, summary, risk, selectedSku = "") {
   if (!question) return null;
   const q = normalizeQuery(question);
@@ -912,6 +1118,11 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
   const asksLeadTime = hasAny(q, ["lead time", "supplier delay", "delay", "14 ngay", "14 days"]);
   const asksBudget = hasAny(q, ["budget", "limited", "gioi han", "uu tien", "priority", "prioritize", "nhap gap", "nhap them", "mua them", "logistics", "this week", "tuan nay"]);
   const asksStockout = hasAny(q, ["stockout", "thieu hang", "het hang", "replenishment", "reorder", "nhap hang", "nhap them", "mua them"]);
+  const asksActionPlan = hasAny(q, ["action plan", "create plan", "replenishment plan", "ke hoach", "planner", "approve order"]);
+  const asksExplain = hasAny(q, ["explain", "why", "tai sao", "vi sao", "critical", "risky", "rui ro"]);
+  const asksScenarioCompare = hasAny(q, ["compare scenario", "baseline vs", "so sanh kich ban", "scenario comparison"]);
+  const asksExecutive = hasAny(q, ["executive summary", "board summary", "management summary", "summary for this week", "tom tat"]);
+  const asksManualReview = hasAny(q, ["manual review", "review manually", "can xem", "review before action"]);
   const asksGlobalList = hasAny(q, ["top", "which skus", "sku nao", "list", "danh sach", "highest", "cao nhat"]);
   const asksGenericTopSku = asksGlobalList && !asksProfit && !asksRevenue && !asksOverstock && !asksTrend && !asksLeadTime;
   const asksSkuContext = Boolean(skuInQuestion) && (
@@ -936,6 +1147,79 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
       ],
       columns: dataGovernanceColumns,
       note: "Decision note: the agent can explain and rank what is loaded in the CSV tables; it should not invent live inventory, supplier commitments, or purchase orders.",
+    };
+  }
+
+  if (asksExecutive) {
+    const actionRows = buildPlannerRows(summary, risk, 10);
+    const stockout = risk.filter((row) => row.risk_type === "Stockout risk");
+    const overstock = risk.filter((row) => row.risk_type === "Overstock risk");
+    return {
+      intent: "Executive operating summary",
+      summary: `Next 28 days: ${number(summary.length)} managed SKUs, ${number(stockout.length)} stockout-risk SKUs, and ${number(overstock.length)} overstock-risk SKUs. The recommended management focus is protecting high-profit stockout exposure while slowing purchase orders for overstock signals.`,
+      metrics: [
+        { label: "28D Demand", value: number(summary.reduce((sum, row) => sum + Number(row.forecast_28d_qty || 0), 0), 1) },
+        { label: "Revenue Proxy", value: shortMoney(summary.reduce((sum, row) => sum + Number(row.forecast_28d_revenue || 0), 0)) },
+        { label: "Action Items", value: number(actionRows.length) },
+      ],
+      actions: ["Approve high-urgency replenishment review", "Validate real stock before purchase", "Watch overstock SKUs for promotion or PO slowdown"],
+      rows: actionRows,
+      columns: plannerColumns,
+      note: "Executive brief is generated from prepared forecast and risk tables; inventory remains a scenario assumption.",
+    };
+  }
+
+  if (asksScenarioCompare) {
+    const rows = buildScenarioComparison(summary, { lead: 14, safety: 7, uplift: 0 });
+    const supplierDelay = rows.find((row) => row.name === "Supplier Delay");
+    const baseline = rows[0];
+    return {
+      intent: "Scenario comparison action mode",
+      summary: `Supplier Delay versus Baseline changes stockout-risk SKUs by ${number((supplierDelay?.stockout_count || 0) - (baseline?.stockout_count || 0))} and revenue at risk by ${money((supplierDelay?.revenue_at_risk || 0) - (baseline?.revenue_at_risk || 0))}.`,
+      metrics: [
+        { label: "Baseline revenue risk", value: shortMoney(baseline?.revenue_at_risk || 0) },
+        { label: "Supplier delay risk", value: shortMoney(supplierDelay?.revenue_at_risk || 0) },
+        { label: "Revenue delta", value: shortMoney((supplierDelay?.revenue_at_risk || 0) - (baseline?.revenue_at_risk || 0)) },
+      ],
+      actions: ["Open Scenario Simulator", "Stress-test supplier delay", "Review SKUs newly exposed by lead time"],
+      rows,
+      columns: scenarioComparisonColumns,
+      note: "Scenario comparison is rule-based and uses assumed lead time, safety stock, and forecast demand.",
+    };
+  }
+
+  if (asksActionPlan) {
+    const rows = buildPlannerRows(summary, risk, 10);
+    return {
+      intent: "Replenishment action plan",
+      summary: "I created a prioritized replenishment action plan from forecast risk, suggested order quantity, expected stockout timing, and profit exposure.",
+      metrics: [
+        { label: "High urgency", value: number(rows.filter((row) => row.urgency === "High").length) },
+        { label: "Suggested order qty", value: number(rows.reduce((sum, row) => sum + Number(row.suggested_order_qty || 0), 0), 1) },
+        { label: "Profit protected", value: shortMoney(rows.reduce((sum, row) => sum + Number(row.business_impact || 0), 0)) },
+      ],
+      actions: ["Open Replenishment Planner", "Approve or defer each item", "Validate real stock before purchase"],
+      rows,
+      columns: plannerColumns,
+      note: "This plan is decision support. Final purchase approval remains with the responsible owner.",
+    };
+  }
+
+  if (asksManualReview) {
+    const rows = buildPlannerRows(summary, risk, 30)
+      .filter((row) => row.urgency !== "Low" && (Number(row.risk_score || 0) < 20 || Math.abs(Number(row.demand_change_pct || 0)) > 40))
+      .slice(0, 10);
+    return {
+      intent: "Manual review queue",
+      summary: "These SKUs should be reviewed manually because their action signal is meaningful but the demand movement or risk confidence deserves a planner check before approval.",
+      metrics: [
+        { label: "Review SKUs", value: number(rows.length) },
+        { label: "Profit exposure", value: shortMoney(rows.reduce((sum, row) => sum + Number(row.business_impact || 0), 0)) },
+      ],
+      actions: ["Assign planner review", "Check recent sales context", "Confirm real stock and supplier coverage"],
+      rows,
+      columns: plannerColumns,
+      note: "Manual review is a conservative workflow layer, not a model retraining signal.",
     };
   }
 
@@ -965,9 +1249,12 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
       recommended_action: "Prioritize replenishment and confirm supplier availability",
     };
     const trend = Number(skuSummary.demand_change_pct || 0) >= 0 ? "up" : "down";
+    const drivers = riskDriversFor({ ...skuSummary, ...briefRow });
     return {
-      intent: "Single-SKU decision brief",
-      summary: `${skuInQuestion} is forecast at ${number(skuSummary.forecast_28d_qty, 1)} units over the next 28 days, ${trend} ${number(Math.abs(skuSummary.demand_change_pct || 0), 1)}% versus the last 28 days. Estimated revenue is ${money(skuSummary.forecast_28d_revenue)} with ${money(skuSummary.forecast_28d_profit)} profit proxy.`,
+      intent: asksExplain ? "SKU risk explanation" : "Single-SKU decision brief",
+      summary: asksExplain
+        ? `${skuInQuestion} is risky because ${drivers.filter((driver) => driver.points > 0).slice(0, 3).map((driver) => driver.label.toLowerCase()).join(", ")}. The item has ${money(skuSummary.forecast_28d_profit)} profit proxy and ${number(briefRow.suggested_order_qty || 0, 1)} suggested order quantity.`
+        : `${skuInQuestion} is forecast at ${number(skuSummary.forecast_28d_qty, 1)} units over the next 28 days, ${trend} ${number(Math.abs(skuSummary.demand_change_pct || 0), 1)}% versus the last 28 days. Estimated revenue is ${money(skuSummary.forecast_28d_revenue)} with ${money(skuSummary.forecast_28d_profit)} profit proxy.`,
       metrics: [
         { label: "Last 28D actual", value: number(skuSummary.last_28d_qty, 1) },
         { label: "28D forecast", value: number(skuSummary.forecast_28d_qty, 1) },
@@ -1127,6 +1414,12 @@ function Scenario({ data }) {
     .filter((row) => row.risk_type === "Stockout risk" && !baseStockout.some((base) => base.sku_id === row.sku_id))
     .sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy)
     .slice(0, 8);
+  const scenarioSummary = React.useMemo(() => buildScenarioComparison(summary, { lead, safety, uplift }), [summary, lead, safety, uplift]);
+  const baselineScenario = scenarioSummary[0];
+  const stressScenario = scenarioSummary.find((item) => item.name === "Supplier Delay") || scenarioSummary[1];
+  const scenarioInsight = stressScenario && baselineScenario
+    ? `${stressScenario.name} creates ${number(stressScenario.stockout_count - baselineScenario.stockout_count)} additional stockout-risk SKUs and changes revenue at risk by ${money(stressScenario.revenue_at_risk - baselineScenario.revenue_at_risk)} versus baseline.`
+    : "Scenario comparison is calculated from forecast demand, lead time, safety stock, and assumed inventory.";
   return (
     <>
       <TopHeader pageTitle="Scenario Simulator" subtitle="Estimate the operational impact of lead time, safety stock, and demand uplift assumptions." />
@@ -1141,6 +1434,22 @@ function Scenario({ data }) {
           </div>
         </Card>
       </div>
+      <Card title="Scenario Comparison Mode" tag="compare to baseline">
+        <div className="scenarioInsight">
+          <strong>{scenarioInsight}</strong>
+          <span>All scenarios are decision-support assumptions and do not create purchase orders.</span>
+        </div>
+        <DataTable rows={scenarioSummary} limit={scenarioSummary.length} columns={[
+          { key: "name", label: "Scenario" },
+          { key: "lead_time", label: "Lead Time", render: (value) => `${value}D` },
+          { key: "safety_stock", label: "Safety Stock", render: (value) => `${value}D` },
+          { key: "demand_uplift", label: "Demand Uplift", render: (value) => `${value > 0 ? "+" : ""}${value}%` },
+          { key: "stockout_count", label: "Stockout SKUs", render: number },
+          { key: "revenue_at_risk", label: "Revenue at Risk", render: money },
+          { key: "profit_at_risk", label: "Profit at Risk", render: money },
+          { key: "delta_vs_baseline", label: "Revenue Delta", render: money },
+        ]} />
+      </Card>
       <div className="kpiGrid four">
         <KpiCard icon={AlertTriangle} label="Stockout-risk SKUs" value={number(stockout.length)} sub={`${stockout.length - baseStockout.length >= 0 ? "+" : ""}${number(stockout.length - baseStockout.length)} vs baseline`} tone="red" />
         <KpiCard icon={PackageSearch} label="Overstock-risk SKUs" value={number(overstock.length)} sub={`${overstock.length - baseOverstock.length >= 0 ? "+" : ""}${number(overstock.length - baseOverstock.length)} vs baseline`} tone="purple" />
@@ -1213,6 +1522,37 @@ function calculateScenario(summary, lead, safety, uplift) {
       suggested_order_qty: Math.max(0, reorder + demand - stock),
     };
   });
+}
+
+function summarizeScenario(summary, name, lead, safety, uplift, baselineRevenue = 0) {
+  const rows = calculateScenario(summary, lead, safety, uplift);
+  const stockout = rows.filter((row) => row.risk_type === "Stockout risk");
+  const overstock = rows.filter((row) => row.risk_type === "Overstock risk");
+  const revenue = stockout.reduce((sum, row) => sum + Number(row.revenue_at_risk_proxy || 0), 0);
+  const profit = stockout.reduce((sum, row) => sum + Number(row.profit_at_risk_proxy || 0), 0);
+  return {
+    name,
+    lead_time: lead,
+    safety_stock: safety,
+    demand_uplift: uplift,
+    stockout_count: stockout.length,
+    overstock_count: overstock.length,
+    revenue_at_risk: revenue,
+    profit_at_risk: profit,
+    delta_vs_baseline: revenue - baselineRevenue,
+  };
+}
+
+function buildScenarioComparison(summary, custom) {
+  const baseline = summarizeScenario(summary, "Baseline", 7, 7, 0, 0);
+  const baselineRevenue = baseline.revenue_at_risk;
+  return [
+    { ...baseline, delta_vs_baseline: 0 },
+    summarizeScenario(summary, "Supplier Delay", 14, 7, 0, baselineRevenue),
+    summarizeScenario(summary, "Peak Demand", 14, 7, 20, baselineRevenue),
+    summarizeScenario(summary, "Conservative Stock", 10, 14, 10, baselineRevenue),
+    summarizeScenario(summary, "Current Custom", custom.lead, custom.safety, custom.uplift, baselineRevenue),
+  ];
 }
 
 function FloatingCopilot({ data, setActive }) {
@@ -1290,6 +1630,7 @@ function FloatingCopilot({ data, setActive }) {
                   </div>
                   <div className="aiQuickActions">
                     <button type="button" onClick={() => runQuickAction("detail")}>Open SKU Detail</button>
+                    <button type="button" onClick={() => runQuickAction("planner")}>Open Planner</button>
                     <button type="button" onClick={() => runQuickAction("risk")}>View Risk Queue</button>
                     <button type="button" onClick={() => runQuickAction("scenario")}>Run Scenario</button>
                   </div>
@@ -1354,6 +1695,7 @@ function App() {
     dashboard: <Dashboard data={data} />,
     engine: <ForecastEngine data={data} />,
     risk: <RiskMonitor data={data} />,
+    planner: <ReplenishmentPlanner data={data} />,
     detail: <ForecastDetail data={data} />,
     agent: <Agent data={data} />,
     scenario: <Scenario data={data} />,
