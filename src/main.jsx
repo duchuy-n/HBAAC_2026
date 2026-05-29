@@ -853,15 +853,15 @@ function MixRow({ label, value, color, total }) {
 
 function RiskMonitor({ data }) {
   const { risk } = data;
-  const [group, setGroup] = React.useState("Stockout risk");
+  const [group, setGroup] = React.useState("All");
   const [topN, setTopN] = React.useState(25);
   const [sortBy, setSortBy] = React.useState("profit_at_risk_proxy");
   const [search, setSearch] = React.useState("");
-  const filtered = risk
+  const matchingRows = risk
     .filter((r) => group === "All" || r.risk_type === group)
     .filter((r) => !search || String(r.sku_id).toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => Number(b[sortBy] || 0) - Number(a[sortBy] || 0))
-    .slice(0, topN);
+    .sort((a, b) => Number(b[sortBy] || 0) - Number(a[sortBy] || 0));
+  const filtered = matchingRows.slice(0, topN);
   const revenue = filtered.reduce((s, r) => s + Number(r.revenue_at_risk_proxy || 0), 0);
   const profit = filtered.reduce((s, r) => s + Number(r.profit_at_risk_proxy || 0), 0);
   const avgRisk = filtered.reduce((s, r) => s + Number(r.risk_score || 0), 0) / Math.max(filtered.length, 1);
@@ -872,13 +872,13 @@ function RiskMonitor({ data }) {
       <Card title="Bộ lọc Risk Queue" tag="priority queue">
         <div className="filterRow">
           <label>Nhóm cảnh báo<select value={group} onChange={(e) => setGroup(e.target.value)}><option value="All">Tất cả</option><option value="Stockout risk">Stockout risk</option><option value="Overstock risk">Overstock risk</option></select></label>
-          <label>Số SKU hiển thị<input type="range" min="5" max="100" step="5" value={topN} onChange={(e) => setTopN(Number(e.target.value))} /><span>{topN}</span></label>
+          <label>Số SKU hiển thị<input type="range" min="5" max="100" step="5" value={topN} onChange={(e) => setTopN(Number(e.target.value))} /><span>{filtered.length}/{matchingRows.length} SKU</span></label>
           <label>Sắp xếp theo<select value={sortBy} onChange={(e) => setSortBy(e.target.value)}><option value="profit_at_risk_proxy">Profit at risk</option><option value="revenue_at_risk_proxy">Revenue at risk</option><option value="risk_score">Risk score</option></select></label>
           <label>Tìm SKU<input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="SKU-00003" /></label>
         </div>
       </Card>
       <div className="kpiGrid four">
-        <KpiCard icon={Boxes} label="SKU trong list" value={number(filtered.length)} sub="Theo bộ lọc hiện tại" />
+        <KpiCard icon={Boxes} label="SKU trong list" value={number(filtered.length)} sub={`Trong ${number(matchingRows.length)} SKU khớp filter`} />
         <KpiCard icon={DollarSign} label="Revenue at risk" value={money(revenue)} sub="Danh sách đang xem" tone="red" />
         <KpiCard icon={BarChart3} label="Profit proxy at risk" value={money(profit)} sub="Danh sách đang xem" tone="amber" />
         <KpiCard icon={Gauge} label="Risk score TB" value={number(avgRisk, 1)} sub="Thang 0-100" tone="teal" />
