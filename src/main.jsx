@@ -1,24 +1,16 @@
-import React from "react";
+﻿import React from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Activity,
   AlertTriangle,
   BarChart3,
   Bell,
   Bot,
   Boxes,
-  CalendarClock,
-  ChevronRight,
-  CheckCircle2,
   ClipboardList,
-  Cpu,
-  Database,
   DollarSign,
-  Factory,
   Gauge,
   LineChart,
   PackageSearch,
-  RefreshCw,
   Search,
   SendHorizontal,
   Settings2,
@@ -100,8 +92,6 @@ function useDashboardData() {
 
 const pages = [
   { key: "dashboard", label: "Dashboard", icon: Gauge },
-  { key: "engine", label: "Forecast Engine", icon: Factory },
-  { key: "ops", label: "Model Ops", icon: Activity },
   { key: "risk", label: "SKU Risk Monitor", icon: ShieldCheck },
   { key: "planner", label: "Planner nhập hàng", icon: ClipboardList },
   { key: "detail", label: "Chi tiết Forecast", icon: LineChart },
@@ -159,6 +149,8 @@ const scenarioNameLabel = {
   "Current Custom": "Tuỳ chỉnh hiện tại",
   Custom: "Tuỳ chỉnh",
 };
+
+const AI_THINKING_DELAY_MS = 1500;
 
 function goToSkuDetail(skuId) {
   if (!skuId) return;
@@ -776,21 +768,6 @@ function Dashboard({ data }) {
           <button type="button" onClick={() => goToPage("agent")}>Tạo AI brief</button>
         </div>
       </section>
-      <section className="storyRail" aria-label="Demo operating story">
-        {[
-          ["Forecast sẵn sàng", "894K dòng SKU-day đã score"],
-          ["Risk queue", `${number(stockout.length + overstock.length)} SKU có cảnh báo`],
-          ["Planner", "Order được xếp theo impact"],
-          ["Rescue", "Transfer, substitute, expedite"],
-          ["AI brief", "Narrative sẵn sàng trình quản lý"],
-        ].map(([label, detail], index) => (
-          <div className="storyStep" key={label}>
-            <span>{String(index + 1).padStart(2, "0")}</span>
-            <strong>{label}</strong>
-            <p>{detail}</p>
-          </div>
-        ))}
-      </section>
       <div className="kpiGrid six">
         <KpiCard icon={Boxes} label="SKU quản lý" value={number(summary.length)} sub="Catalog đang hoạt động" tone="teal" />
         <KpiCard icon={TrendingUp} label="Demand 28 ngày tới" value={number(summary.reduce((s, r) => s + r.forecast_28d_qty, 0))} sub="Forecast batch" tone="cyan" />
@@ -872,136 +849,6 @@ function MixRow({ label, value, color, total }) {
       <div className="mixTrack"><i style={{ width: `${(value / total) * 100}%`, background: color }} /></div>
     </div>
   );
-}
-
-function ForecastEngine({ data }) {
-  const { metadata, summary } = data;
-  return (
-    <>
-      <TopHeader pageTitle="Forecast Engine" subtitle="Cách Forecast batch được tạo, hiệu chỉnh và chuyển thành tín hiệu vận hành." />
-      <div className="kpiGrid four">
-        <KpiCard icon={Boxes} label="Forecast Grain" value="SKU-day" sub={`${number(summary.length)} SKU, 56 ngày Forecast`} />
-        <KpiCard icon={TrendingUp} label="Public Score" value={metadata.public_score || "0.48498"} sub={`Rank #${metadata.public_rank || 2}`} tone="green" />
-        <KpiCard icon={BarChart3} label="Private Score" value={metadata.private_score || "0.52425"} sub={`Rank #${metadata.private_rank || 4}`} tone="amber" />
-        <KpiCard icon={AlertTriangle} label="CV Baseline" value="0.587326" sub="Diagnostic ban đầu" tone="red" />
-      </div>
-      <div className="grid two">
-        <Card title="Kiến trúc Forecast" tag="hybrid model">
-          <div className="stepper">
-            <Step n="01" title="Statistical backbone" text="Median-56, mean-21, hệ số weekday và xử lý ngày bán bất thường." />
-            <Step n="02" title="Direct XGBoost" text="Top 500 high-profit-weight SKUs are modeled with a Tweedie objective." />
-            <Step n="03" title="Calibration layer" text="Volume matching và historical SKU-ratio calibration giúp kiểm soát tổng demand đánh giá." />
-          </div>
-        </Card>
-        <Card title="Feature System" tag="khoảng 79 features">
-          <div className="featureList">
-            <Feature name="Demand history" value="lag_1, lag_7, lag_28; rolling mean 7/21/56/112; median 56" />
-            <Feature name="Sparse demand" value="active rate, active days, days since last sale, trạng thái inactivity" />
-            <Feature name="Calendar" value="weekday, month, weekend, sin/cos seasonality" />
-            <Feature name="Business signals" value="unit price, unit cost, profit weight, profit rank" />
-          </div>
-        </Card>
-      </div>
-      <Card title="Tích hợp Product Layer" tag="operations">
-        <div className="integrationFlow">
-          <span>Forecast file</span><ChevronRight size={18} /><span>Risk logic</span><ChevronRight size={18} /><span>Priority queue</span><ChevronRight size={18} /><span>Decision support</span>
-        </div>
-      </Card>
-    </>
-  );
-}
-
-function ModelOps({ data }) {
-  const { metadata, summary, risk, forecast } = data;
-  const forecastDates = forecast.map((row) => String(row.date)).filter(Boolean).sort();
-  const horizonStart = forecastDates[0] || "batch start";
-  const horizonEnd = forecastDates.at(-1) || "batch end";
-  const selectedFile = String(metadata.selected_submission || "submission_private_skuratio_g120_h50_clip0p75_1p8.csv");
-  const stockout = risk.filter((row) => row.risk_type === "Stockout risk");
-  const overstock = risk.filter((row) => row.risk_type === "Overstock risk");
-  const pipeline = [
-    { label: "Data ingest", detail: "Forecast, train, recent actuals", status: "Sẵn sàng", icon: Database },
-    { label: "Feature build", detail: "79 tín hiệu demand, sparse, calendar, margin", status: "Tốt", icon: Cpu },
-    { label: "Model scoring", detail: "XGBoost + statistical backbone", status: "Đã score", icon: Activity },
-    { label: "Calibration", detail: "SKU-ratio và total volume guardrail", status: "Đã khóa", icon: CheckCircle2 },
-    { label: "Risk publish", detail: "Stockout, overstock, planner queues", status: "Đã publish", icon: RefreshCw },
-  ];
-  const assets = [
-    { asset: selectedFile, role: "Forecast submission được chọn", status: `Public #${metadata.public_rank || 2} / Private #${metadata.private_rank || 4}` },
-    { asset: "sku_forecast_summary.csv", role: "Demand, revenue, profit proxy ở cấp SKU", status: `${number(summary.length)} SKU` },
-    { asset: "sku_risk_table.csv", role: "Decision queue stockout và overstock", status: `${number(risk.length)} dòng cảnh báo` },
-    { asset: "forecast_long.csv", role: "Đường Forecast theo ngày cho dashboard/detail", status: `${horizonStart} đến ${horizonEnd}` },
-    { asset: "recent_actuals.csv", role: "Ngữ cảnh demand gần nhất", status: "Đã nạp cho chi tiết SKU" },
-  ];
-
-  return (
-    <>
-      <TopHeader pageTitle="Phòng điều hành Model Ops" subtitle="Cho thấy Forecast batch được quản trị, refresh và publish thành decision intelligence như thế nào." />
-      <section className="opsHero">
-        <div>
-          <span>Demo batch telemetry</span>
-          <h2>Forecast pipeline đã sẵn sàng publish, với guardrail rõ trước mọi quyết định vận hành.</h2>
-          <p>
-            Control room này làm demo giống sản phẩm triển khai thật: BGK nhìn được độ mới dữ liệu, model version,
-            trạng thái calibration và ranh giới giữa intelligence từ CSV đã chuẩn bị với dữ liệu ERP/WMS live.
-          </p>
-        </div>
-        <div className="opsStamp">
-          <CalendarClock size={24} />
-          <span>Lần refresh gần nhất</span>
-          <strong>Batch T+0 · 08:00 ICT</strong>
-          <p>Lịch refresh tiếp theo: ngày mai 08:00 ICT</p>
-        </div>
-      </section>
-      <div className="kpiGrid four">
-        <KpiCard icon={Database} label="Forecast batch" value="56D" sub={`${number(summary.length)} SKU đã score`} tone="cyan" />
-        <KpiCard icon={Activity} label="Model version" value="XGB-R2" sub="Private SKU-ratio batch" tone="green" />
-        <KpiCard icon={CheckCircle2} label="Feature health" value="79/79" sub="Không có feature gap chặn publish" tone="green" />
-        <KpiCard icon={AlertTriangle} label="Drift guard" value={number(stockout.length + overstock.length)} sub="SKU cảnh báo đã publish" tone="amber" />
-      </div>
-      <Card title="Pipeline publish Forecast" tag="governed batch">
-        <div className="pipelineTimeline">
-          {pipeline.map((step, index) => {
-            const Icon = step.icon;
-            return (
-              <div className="pipelineStep" key={step.label}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <Icon size={22} />
-                <strong>{step.label}</strong>
-                <p>{step.detail}</p>
-                <em>{step.status}</em>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
-      <div className="grid two">
-        <Card title="Data Assets" tag="CSV contract đã nạp">
-          <DataTable rows={assets} limit={assets.length} columns={[
-            { key: "asset", label: "Asset" },
-            { key: "role", label: "Vai trò" },
-            { key: "status", label: "Trạng thái" },
-          ]} />
-        </Card>
-        <Card title="Deployment Guardrails" tag="đâu là thật, đâu là giả định">
-          <div className="guardrailList">
-            <Feature name="Forecast output" value="Các batch table đã chuẩn bị vận hành dashboard, agent, risk monitor và scenario simulator." />
-            <Feature name="Inventory và lead time" value="Giả định scenario cho decision support demo vì contest data không có bảng inventory/WMS thật." />
-            <Feature name="Impact proxy" value="Revenue/profit impact là proxy tính từ Forecast quantity và trường sales/cost lịch sử." />
-            <Feature name="Operator handoff" value="Mọi hành động vẫn cần xác thực tồn kho thật, branch stock và supplier trước khi mua hàng." />
-          </div>
-        </Card>
-      </div>
-    </>
-  );
-}
-
-function Step({ n, title, text }) {
-  return <div className="step"><span>{n}</span><div><strong>{title}</strong><p>{text}</p></div></div>;
-}
-
-function Feature({ name, value }) {
-  return <div className="feature"><strong>{name}</strong><p>{value}</p></div>;
 }
 
 function RiskMonitor({ data }) {
@@ -1455,14 +1302,40 @@ function RiskDriver({ driver }) {
   );
 }
 
+function AiThinking({ compact = false }) {
+  const steps = compact
+    ? ["Đọc Forecast", "Xếp hạng risk", "Soạn brief"]
+    : ["Đọc Forecast output", "Kiểm tra stockout/overstock", "Xếp hạng profit exposure", "Soạn action brief"];
+  return (
+    <div className={compact ? "aiThinking compact" : "aiThinking"} role="status" aria-live="polite">
+      <div className="thinkingHeader">
+        <span className="thinkingAvatar"><Bot size={compact ? 16 : 20} /></span>
+        <div>
+          <strong>AI Agent đang suy nghĩ</strong>
+          <p>Đang phân tích Forecast, risk table và action queue...</p>
+        </div>
+        <span className="thinkingDots" aria-hidden="true"><i /><i /><i /></span>
+      </div>
+      <div className="thinkingSteps">
+        {steps.map((step, index) => (
+          <span key={step} style={{ "--delay": `${index * 90}ms` }}>{step}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Agent({ data }) {
   const { summary, risk } = data;
   const [question, setQuestion] = React.useState("");
   const [submitted, setSubmitted] = React.useState("");
+  const [thinkingQuestion, setThinkingQuestion] = React.useState("");
   const [selectedSku, setSelectedSku] = React.useState(sessionStorage.getItem("selectedSku") || "");
+  const thinkingTimer = React.useRef(null);
   const contextRow = summary.find((row) => row.sku_id === selectedSku);
   const contextRisk = risk.find((row) => row.sku_id === selectedSku);
   const answer = React.useMemo(() => localizeAgentAnswer(buildAgentAnswer(submitted, summary, risk, selectedSku), submitted), [submitted, summary, risk, selectedSku]);
+  const isThinking = Boolean(thinkingQuestion);
   const quickPrompts = [
     "SKU nào cần nhập gấp?",
     "Tạo brief cho quản lý tuần này",
@@ -1479,9 +1352,19 @@ function Agent({ data }) {
     };
   }, []);
 
-  const runAnalysis = () => {
-    const cleaned = question.trim();
-    if (cleaned) setSubmitted(cleaned);
+  React.useEffect(() => () => window.clearTimeout(thinkingTimer.current), []);
+
+  const runAnalysis = (value = question) => {
+    const cleaned = String(value || "").trim();
+    if (!cleaned) return;
+    setQuestion(cleaned);
+    setSubmitted("");
+    setThinkingQuestion(cleaned);
+    window.clearTimeout(thinkingTimer.current);
+    thinkingTimer.current = window.setTimeout(() => {
+      setSubmitted(cleaned);
+      setThinkingQuestion("");
+    }, AI_THINKING_DELAY_MS);
   };
   return (
     <>
@@ -1498,18 +1381,23 @@ function Agent({ data }) {
           ) : null}
           <div className="promptChips" aria-label="Gợi ý nhanh cho AI Agent">
             {quickPrompts.map((prompt) => (
-              <button type="button" key={prompt} onClick={() => { setQuestion(prompt); setSubmitted(prompt); }}>{prompt}</button>
+              <button type="button" key={prompt} onClick={() => runAnalysis(prompt)}>{prompt}</button>
             ))}
           </div>
           <label className="stackLabel">Nhập câu hỏi<input value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") runAnalysis(); }} placeholder={contextRow ? `Hỏi logistics nên làm gì với ${selectedSku}...` : "Hỏi về replenishment, stockout risk, profit priority hoặc hành động tuần này..."} /></label>
-          <button className="primaryButton" onClick={runAnalysis}>Chạy phân tích</button>
+          <button className="primaryButton" onClick={() => runAnalysis()} disabled={isThinking}>{isThinking ? "Đang phân tích..." : "Chạy phân tích"}</button>
           <div className="smallMetricRow">
             <ScopeMetric label="Forecast revenue" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0))} />
             <ScopeMetric label="Profit proxy" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_profit, 0))} />
           </div>
         </Card>
-        <Card title={submitted ? "Kết quả khuyến nghị" : "Sẵn sàng phân tích"} tag={submitted ? "decision brief" : "chưa có câu hỏi"}>
-          {!submitted ? (
+        <Card title={isThinking ? "AI đang suy nghĩ" : submitted ? "Kết quả khuyến nghị" : "Sẵn sàng phân tích"} tag={isThinking ? "đang phân tích" : submitted ? "decision brief" : "chưa có câu hỏi"}>
+          {isThinking ? (
+            <div className="answerPane" aria-busy="true">
+              <div className="questionBubble">{thinkingQuestion}</div>
+              <AiThinking />
+            </div>
+          ) : !submitted ? (
             <div className="emptyState"><Bot size={46} /><strong>Sẵn sàng tạo operating brief</strong><p>Nhập câu hỏi rồi chạy phân tích. Agent sẽ trả lời theo dạng brief vận hành.</p></div>
           ) : (
             <div className="answerPane">
@@ -1709,7 +1597,7 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
   const asksRescue = hasAny(q, ["rescue", "stockout rescue", "save revenue", "substitute", "branch transfer", "expedite supplier", "cuu sku", "cuu doanh thu"]);
   const asksExplain = hasAny(q, ["explain", "why", "tai sao", "vi sao", "critical", "risky", "rui ro"]);
   const asksScenarioCompare = hasAny(q, ["compare scenario", "baseline vs", "so sanh kich ban", "scenario comparison"]);
-  const asksExecutive = hasAny(q, ["executive summary", "board summary", "management summary", "summary for this week", "tom tat"]);
+  const asksExecutive = hasAny(q, ["executive summary", "board summary", "management summary", "summary for this week", "tom tat", "brief", "quan ly", "manager brief"]);
   const asksManualReview = hasAny(q, ["manual review", "review manually", "can xem", "review before action"]);
   const asksGlobalList = hasAny(q, ["top", "which skus", "sku nao", "list", "danh sach", "highest", "cao nhat"]);
   const asksGenericTopSku = asksGlobalList && !asksProfit && !asksRevenue && !asksOverstock && !asksTrend && !asksLeadTime;
@@ -2233,9 +2121,12 @@ function FloatingCopilot({ data, setActive }) {
   const [open, setOpen] = React.useState(false);
   const [question, setQuestion] = React.useState("");
   const [submitted, setSubmitted] = React.useState("");
+  const [thinkingQuestion, setThinkingQuestion] = React.useState("");
   const [selectedSku, setSelectedSku] = React.useState(sessionStorage.getItem("selectedSku") || "");
+  const thinkingTimer = React.useRef(null);
   const answer = React.useMemo(() => localizeAgentAnswer(buildAgentAnswer(submitted, summary, risk, selectedSku), submitted), [submitted, summary, risk, selectedSku]);
   const contextRow = summary.find((row) => row.sku_id === selectedSku);
+  const isThinking = Boolean(thinkingQuestion);
   const quickPrompts = ["SKU nào cần nhập gấp?", "Tạo brief cho quản lý", "Stress test supplier delay"];
 
   React.useEffect(() => {
@@ -2248,9 +2139,19 @@ function FloatingCopilot({ data, setActive }) {
     };
   }, []);
 
-  const run = () => {
-    const cleaned = question.trim();
-    if (cleaned) setSubmitted(cleaned);
+  React.useEffect(() => () => window.clearTimeout(thinkingTimer.current), []);
+
+  const run = (value = question) => {
+    const cleaned = String(value || "").trim();
+    if (!cleaned) return;
+    setQuestion(cleaned);
+    setSubmitted("");
+    setThinkingQuestion(cleaned);
+    window.clearTimeout(thinkingTimer.current);
+    thinkingTimer.current = window.setTimeout(() => {
+      setSubmitted(cleaned);
+      setThinkingQuestion("");
+    }, AI_THINKING_DELAY_MS);
   };
 
   const runQuickAction = (target) => {
@@ -2287,14 +2188,19 @@ function FloatingCopilot({ data, setActive }) {
             <button type="button" className="iconButton" onClick={() => setOpen(false)} aria-label="Đóng AI copilot"><X size={18} /></button>
           </div>
           <div className="copilotMessages">
-            {!submitted ? (
+            {isThinking ? (
+              <>
+                <div className="miniQuestion">{thinkingQuestion}</div>
+                <AiThinking compact />
+              </>
+            ) : !submitted ? (
               <div className="copilotEmpty">
                 <Bot size={38} />
                 <strong>Sẵn sàng tạo operating brief</strong>
                 <p>Hỏi về replenishment, stockout risk, profit priority, demand trend, lead time hoặc SKU đang chọn.</p>
                 <div className="copilotPromptChips">
                   {quickPrompts.map((prompt) => (
-                    <button type="button" key={prompt} onClick={() => { setQuestion(prompt); setSubmitted(prompt); }}>{prompt}</button>
+                    <button type="button" key={prompt} onClick={() => run(prompt)}>{prompt}</button>
                   ))}
                 </div>
               </div>
@@ -2332,7 +2238,7 @@ function FloatingCopilot({ data, setActive }) {
               onKeyDown={(event) => { if (event.key === "Enter") run(); }}
               placeholder={contextRow ? `Hỏi nên làm gì với ${selectedSku}...` : "Hỏi về SKU, stockout, profit, lead time..."}
             />
-            <button type="button" onClick={run} aria-label="Chạy AI analysis"><SendHorizontal size={18} /></button>
+            <button type="button" onClick={() => run()} disabled={isThinking} aria-label="Chạy AI analysis"><SendHorizontal size={18} /></button>
           </div>
           <button type="button" className="workspaceLink" onClick={openWorkspace}>Mở workspace AI đầy đủ</button>
         </div>
@@ -2378,8 +2284,6 @@ function App() {
 
   const page = {
     dashboard: <Dashboard data={data} />,
-    engine: <ForecastEngine data={data} />,
-    ops: <ModelOps data={data} />,
     risk: <RiskMonitor data={data} />,
     planner: <ReplenishmentPlanner data={data} />,
     detail: <ForecastDetail data={data} />,
