@@ -1,18 +1,24 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import {
+  Activity,
   AlertTriangle,
   BarChart3,
   Bell,
   Bot,
   Boxes,
+  CalendarClock,
   ChevronRight,
+  CheckCircle2,
   ClipboardList,
+  Cpu,
+  Database,
   DollarSign,
   Factory,
   Gauge,
   LineChart,
   PackageSearch,
+  RefreshCw,
   Search,
   SendHorizontal,
   Settings2,
@@ -22,6 +28,8 @@ import {
   X,
 } from "lucide-react";
 import "./styles.css";
+
+const SkuSearchContext = React.createContext([]);
 
 const money = (value) => {
   const n = Number(value || 0);
@@ -60,7 +68,7 @@ function parseCsv(text) {
 
 async function loadCsv(path) {
   const response = await fetch(path);
-  if (!response.ok) throw new Error(`Failed to load ${path}`);
+  if (!response.ok) throw new Error(`Không tải được ${path}`);
   return parseCsv(await response.text());
 }
 
@@ -93,26 +101,63 @@ function useDashboardData() {
 const pages = [
   { key: "dashboard", label: "Dashboard", icon: Gauge },
   { key: "engine", label: "Forecast Engine", icon: Factory },
+  { key: "ops", label: "Model Ops", icon: Activity },
   { key: "risk", label: "SKU Risk Monitor", icon: ShieldCheck },
-  { key: "planner", label: "Replenishment Planner", icon: ClipboardList },
-  { key: "detail", label: "Forecast Detail", icon: LineChart },
+  { key: "planner", label: "Planner nhập hàng", icon: ClipboardList },
+  { key: "detail", label: "Chi tiết Forecast", icon: LineChart },
   { key: "rescue", label: "Rescue Room", icon: AlertTriangle },
   { key: "agent", label: "AI Agent", icon: Bot },
   { key: "scenario", label: "Scenario Simulator", icon: Settings2 },
 ];
 
 const riskLabel = {
-  "Stockout risk": "Stockout risk",
-  "Overstock risk": "Overstock risk",
-  Healthy: "Healthy",
+  "Stockout risk": "Rủi ro stockout",
+  "Overstock risk": "Rủi ro overstock",
+  Healthy: "Bình thường",
+  "Commercial priority": "Ưu tiên thương mại",
 };
 
 const actionLabel = {
   "Prioritize replenishment and confirm supplier availability":
-    "Prioritize replenishment and confirm supplier availability",
-  "Review replenishment need; margin data is limited": "Review replenishment need; margin data is limited",
-  "Slow purchase orders and consider promotion/bundling": "Slow purchase orders and consider promotion/bundling",
-  Monitor: "Monitor",
+    "Ưu tiên nhập hàng và xác nhận khả năng đáp ứng của supplier",
+  "Review replenishment need; margin data is limited": "Rà soát nhu cầu nhập hàng; dữ liệu margin còn hạn chế",
+  "Slow purchase orders and consider promotion/bundling": "Giảm tốc PO và cân nhắc promotion/bundling",
+  Monitor: "Theo dõi",
+};
+
+const severityLabel = {
+  Critical: "Rất gấp",
+  High: "Cao",
+  Watchlist: "Theo dõi",
+  Overstock: "Overstock",
+};
+
+const urgencyLabel = {
+  High: "Cao",
+  Medium: "Trung bình",
+  Low: "Thấp",
+};
+
+const statusLabel = {
+  Open: "Mở",
+  "In Review": "Đang review",
+  Approved: "Đã duyệt",
+  Deferred: "Tạm hoãn",
+  Resolved: "Đã xử lý",
+};
+
+const ownerLabel = {
+  "Inventory Lead": "Inventory Lead",
+  "Sales Ops": "Sales Ops",
+};
+
+const scenarioNameLabel = {
+  Baseline: "Baseline",
+  "Supplier Delay": "Supplier Delay",
+  "Peak Demand": "Peak Demand",
+  "Conservative Stock": "Conservative Stock",
+  "Current Custom": "Tuỳ chỉnh hiện tại",
+  Custom: "Tuỳ chỉnh",
 };
 
 function goToSkuDetail(skuId) {
@@ -129,6 +174,11 @@ function goToRescue(skuId) {
   sessionStorage.setItem("selectedSku", sku);
   window.dispatchEvent(new CustomEvent("sku-search", { detail: sku }));
   window.location.hash = "rescue";
+}
+
+function goToPage(key) {
+  if (!key) return;
+  window.location.hash = key;
 }
 
 function severityFor(row) {
@@ -150,29 +200,29 @@ function urgencyFor(row) {
 }
 
 function expectedStockoutDate(row, baseDate = "2026-10-03") {
-  if (row.risk_type !== "Stockout risk") return "Not projected";
+  if (row.risk_type !== "Stockout risk") return "Không dự báo";
   const daily = Number(row.forecast_daily_avg || row.forecast_28d_qty / 28 || 0);
   const stock = Number(row.current_stock_assumed || 0);
-  if (daily <= 0) return "Not projected";
+  if (daily <= 0) return "Không dự báo";
   const days = Math.max(1, Math.ceil(stock / daily));
   const date = new Date(`${baseDate}T00:00:00`);
   date.setDate(date.getDate() + days);
-  return date.toLocaleDateString("en-US", { month: "short", day: "2-digit" });
+  return date.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
 }
 
 function plannerReason(row) {
-  if (row.risk_type === "Overstock risk") return "Assumed stock is high versus forecast demand; slow purchase orders and review promotion or bundling.";
-  if (Number(row.current_stock_assumed || 0) < Number(row.reorder_point || 0)) return "Assumed stock is below reorder point while forecast demand remains material.";
-  if (Number(row.suggested_order_qty || 0) > 0) return "Forecast coverage indicates a replenishment gap within the next 28 days.";
-  return "Monitor forecast movement and validate real stock before committing action.";
+  if (row.risk_type === "Overstock risk") return "Tồn kho giả định cao hơn Forecast demand; nên giảm tốc PO và xem xét promotion/bundling.";
+  if (Number(row.current_stock_assumed || 0) < Number(row.reorder_point || 0)) return "Tồn kho giả định thấp hơn reorder point trong khi Forecast demand vẫn đáng kể.";
+  if (Number(row.suggested_order_qty || 0) > 0) return "Forecast coverage cho thấy có gap nhập hàng trong 28 ngày tới.";
+  return "Theo dõi biến động Forecast và xác thực tồn kho thật trước khi hành động.";
 }
 
 function leadTimeImpact(row) {
-  if (row.risk_type === "Overstock risk") return "Purchase slowdown recommended";
+  if (row.risk_type === "Overstock risk") return "Khuyến nghị giảm tốc PO";
   const stockout = expectedStockoutDate(row);
-  if (stockout === "Not projected") return "No immediate shortage projected";
+  if (stockout === "Không dự báo") return "Chưa dự báo thiếu hàng ngay";
   const lead = Number(row.lead_time_days || 7);
-  return lead >= 14 ? "Supplier delay may miss coverage window" : "Replenishment can still protect coverage";
+  return lead >= 14 ? "Supplier delay có thể vượt coverage window" : "Nhập hàng vẫn có thể bảo vệ coverage";
 }
 
 function buildPlannerRows(summary, risk, limit = 40) {
@@ -186,7 +236,7 @@ function buildPlannerRows(summary, risk, limit = 40) {
         urgency: urgencyFor(merged),
         owner: merged.risk_type === "Overstock risk" ? "Sales Ops" : "Inventory Lead",
         status: "Open",
-        due_date: urgencyFor(merged) === "High" ? "Next 48h" : urgencyFor(merged) === "Medium" ? "This week" : "Monitor",
+        due_date: urgencyFor(merged) === "High" ? "48h tới" : urgencyFor(merged) === "Medium" ? "Tuần này" : "Theo dõi",
         expected_stockout_date: expectedStockoutDate(merged),
         lead_time_impact: leadTimeImpact(merged),
         reason: plannerReason(merged),
@@ -209,17 +259,17 @@ function riskDriversFor(row) {
   const maxProfit = 2_000_000;
   const drivers = [
     {
-      label: "Stock below reorder point",
+      label: "Tồn kho dưới reorder point",
       value: stockGap,
       points: Math.min(35, stockGap > 0 ? 15 + stockGap / Math.max(Number(row.reorder_point || 1), 1) * 20 : 0),
-      detail: stockGap > 0 ? `${number(stockGap, 1)} units gap` : "No reorder gap",
+      detail: stockGap > 0 ? `Gap ${number(stockGap, 1)} units` : "Không có reorder gap",
       tone: "red",
     },
     {
-      label: "Forecast demand acceleration",
+      label: "Forecast demand tăng tốc",
       value: demandChange,
       points: Math.min(25, demandChange / 2),
-      detail: `${number(row.demand_change_pct || 0, 1)}% vs last 28D`,
+      detail: `${number(row.demand_change_pct || 0, 1)}% so với 28D gần nhất`,
       tone: "amber",
     },
     {
@@ -230,7 +280,7 @@ function riskDriversFor(row) {
       tone: "green",
     },
     {
-      label: "Suggested replenishment size",
+      label: "Quy mô nhập hàng đề xuất",
       value: orderQty,
       points: Math.min(15, orderQty / 10),
       detail: `${number(orderQty, 1)} units`,
@@ -282,7 +332,7 @@ function buildRescuePlan(row, summary) {
       compatibility,
       available_stock: availableStock,
       revenue_recovered: recoveredUnits * unitPrice,
-      risk: compatibility >= 90 ? "Low" : compatibility >= 82 ? "Medium" : "High",
+      risk: compatibility >= 90 ? "Thấp" : compatibility >= 82 ? "Trung bình" : "Cao",
     };
   });
   const transfers = [0, 1].map((index) => {
@@ -294,7 +344,7 @@ function buildRescuePlan(row, summary) {
       to: from === to ? warehouses[(seed + 3) % warehouses.length] : to,
       transfer_qty: transferQty,
       revenue_protected: transferQty * unitPrice,
-      overstock_reduced: index === 0 ? "Yes" : seed % 2 === 0 ? "Yes" : "No",
+      overstock_reduced: index === 0 ? "Có" : seed % 2 === 0 ? "Có" : "Không",
     };
   });
   const supplier = {
@@ -364,17 +414,17 @@ function buildRescuePlan(row, summary) {
 function rescueBriefText(row, plan, selectedActions) {
   const topActions = selectedActions.length ? selectedActions : plan.rescueActions.slice(0, 3);
   return [
-    `Stockout Rescue Plan: ${row.sku_id}`,
+    `Kế hoạch Rescue stockout: ${row.sku_id}`,
     "",
-    `Finding: ${row.sku_id} is at ${plan.impact.severity} stockout rescue priority.`,
-    `Evidence: forecast demand ${number(plan.impact.forecastDemand, 1)} units, assumed stock ${number(plan.impact.assumedStock, 1)} units, unfulfilled demand ${number(plan.impact.unfulfilled, 1)} units.`,
-    `Business impact: direct revenue at risk ${money(plan.impact.directRevenue)}, bundle revenue at risk ${money(plan.impact.bundleRevenue)}, affected bundles ${plan.impact.affectedBundles}, affected vehicle models ${plan.impact.affectedModels}.`,
+    `Kết luận: ${row.sku_id} đang ở mức ưu tiên rescue stockout ${severityLabel[plan.impact.severity] || plan.impact.severity}.`,
+    `Bằng chứng: forecast demand ${number(plan.impact.forecastDemand, 1)} units, tồn kho giả định ${number(plan.impact.assumedStock, 1)} units, nhu cầu chưa đáp ứng ${number(plan.impact.unfulfilled, 1)} units.`,
+    `Tác động kinh doanh: direct revenue at risk ${money(plan.impact.directRevenue)}, bundle revenue at risk ${money(plan.impact.bundleRevenue)}, ${plan.impact.affectedBundles} service bundles và ${plan.impact.affectedModels} vehicle models bị ảnh hưởng.`,
     "",
-    "Recommended rescue actions:",
-    ...topActions.map((action, index) => `${index + 1}. ${action.action} | Cost ${money(action.cost)} | Revenue protected ${money(action.revenue_protected)} | Score ${number(action.decision_score)}`),
+    "Hành động rescue khuyến nghị:",
+    ...topActions.map((action, index) => `${index + 1}. ${action.action} | Chi phí ${money(action.cost)} | Revenue protected ${money(action.revenue_protected)} | Score ${number(action.decision_score)}`),
     "",
-    `Supplier action: ask ${plan.supplier.supplier} to compress lead time to ${plan.supplier.requested_lead_time} for ${number(plan.supplier.expedite_qty)} units across ${number(plan.supplier.scenario_skus)} scenario-linked SKUs.`,
-    "Guardrail: substitute compatibility, warehouse stock, and supplier lead time are scenario assumptions for demo. Validate before execution.",
+    `Hành động với supplier: đề nghị ${plan.supplier.supplier} nén lead time xuống ${plan.supplier.requested_lead_time} cho ${number(plan.supplier.expedite_qty)} units trên ${number(plan.supplier.scenario_skus)} SKU liên quan trong scenario.`,
+    "Guardrail: compatibility thay thế, tồn kho kho và supplier lead time là giả định demo. Cần xác thực trước khi triển khai.",
   ].join("\n");
 }
 
@@ -384,10 +434,10 @@ function briefText({ title, rows, metrics = [] }) {
     "",
     ...metrics.map((item) => `${item.label}: ${item.value}`),
     "",
-    "Priority actions:",
-    ...rows.slice(0, 8).map((row, index) => `${index + 1}. ${row.sku_id} | ${severityFor(row)} | ${row.risk_type || "Priority"} | Profit at risk ${money(row.profit_at_risk_proxy || row.forecast_28d_profit || 0)} | ${actionLabel[row.recommended_action] || row.recommended_action || "Monitor and review replenishment plan"}`),
+    "Hành động ưu tiên:",
+    ...rows.slice(0, 8).map((row, index) => `${index + 1}. ${row.sku_id} | ${severityLabel[severityFor(row)] || severityFor(row)} | ${riskLabel[row.risk_type] || row.risk_type || "Ưu tiên"} | Profit at risk ${money(row.profit_at_risk_proxy || row.forecast_28d_profit || 0)} | ${actionLabel[row.recommended_action] || row.recommended_action || "Theo dõi và review kế hoạch nhập hàng"}`),
     "",
-    "Decision note: forecast is model output; inventory, lead time, stockout and overstock signals are scenario assumptions for decision support.",
+    "Decision note: Forecast là model output; inventory, lead time, stockout và overstock là giả định scenario để hỗ trợ quyết định.",
   ];
   return lines.join("\n");
 }
@@ -412,9 +462,9 @@ function Sidebar({ active, setActive, summary, risk, forecast }) {
           <div className="brandTitle">AutoParts Demand Intelligence</div>
         </div>
       </div>
-      <p className="brandCopy">Forecast-driven inventory control for sales, logistics, and planning teams.</p>
+      <p className="brandCopy">Điều hành inventory bằng Forecast cho đội sales, logistics và planning.</p>
       <div className="sideStats">
-        <div><span>Cycle</span><strong>28D</strong></div>
+        <div><span>Chu kỳ</span><strong>28D</strong></div>
         <div><span>SKUs</span><strong>{number(summary.length)}</strong></div>
       </div>
       <nav>
@@ -426,11 +476,11 @@ function Sidebar({ active, setActive, summary, risk, forecast }) {
         ))}
       </nav>
       <div className="dataScope">
-        <div className="scopeTitle">Data Scope</div>
-        <ScopeMetric label="56-day forecast rows" value={forecast.length} />
-        <ScopeMetric label="SKUs in workspace" value={summary.length} />
-        <ScopeMetric label="Flagged SKUs" value={risk.length} />
-        <p>Inventory, lead time, and stockout/overstock alerts are scenario assumptions, not live ERP/WMS data.</p>
+        <div className="scopeTitle">Phạm vi dữ liệu</div>
+        <ScopeMetric label="Dòng Forecast 56 ngày" value={forecast.length} />
+        <ScopeMetric label="SKU trong workspace" value={summary.length} />
+        <ScopeMetric label="SKU có cảnh báo" value={risk.length} />
+        <p>Inventory, lead time và cảnh báo stockout/overstock là giả định scenario, không phải dữ liệu ERP/WMS live.</p>
       </div>
     </aside>
   );
@@ -448,10 +498,18 @@ function ScopeMetric({ label, value }) {
 
 function TopHeader({ pageTitle, subtitle }) {
   const [query, setQuery] = React.useState("");
+  const [searchError, setSearchError] = React.useState("");
+  const skuIds = React.useContext(SkuSearchContext);
+  const skuSet = React.useMemo(() => new Set(skuIds), [skuIds]);
   const submitSearch = (event) => {
     event.preventDefault();
     const value = query.trim().toUpperCase();
     if (!value) return;
+    if (skuSet.size && !skuSet.has(value)) {
+      setSearchError(`${value} không có trong Forecast workspace.`);
+      return;
+    }
+    setSearchError("");
     sessionStorage.setItem("selectedSku", value);
     window.dispatchEvent(new CustomEvent("sku-search", { detail: value }));
     window.location.hash = "detail";
@@ -465,15 +523,25 @@ function TopHeader({ pageTitle, subtitle }) {
         <div className="headerControls">
           <form className="searchBox" onSubmit={submitSearch}>
             <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search SKU, product, warehouse..." />
+            <input
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                if (searchError) setSearchError("");
+              }}
+              placeholder="Tìm SKU, sản phẩm, kho..."
+              aria-label="Tìm SKU"
+              aria-describedby={searchError ? "sku-search-error" : undefined}
+            />
           </form>
-          <div className="headerFilter">28D · All channels · All warehouses</div>
-          <div className="iconButton" aria-hidden="true"><Bell size={18} /></div>
+          <div className="headerFilter">28D · Tất cả kênh · Tất cả kho</div>
+          <button type="button" className="iconButton" aria-label="Trung tâm thông báo"><Bell size={18} /></button>
         </div>
+        {searchError ? <div id="sku-search-error" className="searchError">{searchError}</div> : null}
       </div>
       <div className="headerPills">
         <span>Forecast output</span>
-        <span>Simulated inventory assumptions</span>
+        <span>Giả định inventory mô phỏng</span>
       </div>
     </header>
   );
@@ -488,7 +556,7 @@ function KpiCard({ icon: Icon, label, value, sub, tone = "teal" }) {
       </div>
       <strong>{value}</strong>
       <p>{sub}</p>
-      <div className="miniTrend"><span /> operational signal</div>
+      <div className="miniTrend"><span /> tín hiệu vận hành</div>
     </div>
   );
 }
@@ -511,7 +579,7 @@ function dateParts(dateText) {
   return { day, month: months[Number(month) - 1] || month };
 }
 
-function ForecastChart({ series, yLabel = "Daily quantity", height = 320, showArea = false }) {
+function ForecastChart({ series, yLabel = "Số lượng/ngày", height = 320, showArea = false }) {
   const width = 900;
   const pad = { left: 70, right: 24, top: 22, bottom: 58 };
   const allPoints = series.flatMap((item) => item.points);
@@ -542,7 +610,7 @@ function ForecastChart({ series, yLabel = "Daily quantity", height = 320, showAr
 
   return (
     <div className="forecastChartWrap">
-      <svg className="forecastChart" style={{ height: `${height}px` }} viewBox={`0 0 ${width} ${height}`} role="img">
+      <svg className="forecastChart" style={{ height: `${height}px` }} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${yLabel} chart`}>
         <defs>
           <linearGradient id="forecastFill" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="#38BDF8" stopOpacity="0.22" />
@@ -609,7 +677,7 @@ function DonutChart({ stockout, overstock }) {
 
 function DataTable({ rows, columns, limit = 10, onRowClick }) {
   return (
-    <div className="tableWrap">
+    <div className="tableWrap" tabIndex="0" aria-label="Scrollable data table">
       <table>
         <thead>
           <tr>
@@ -622,6 +690,15 @@ function DataTable({ rows, columns, limit = 10, onRowClick }) {
               key={`${row.sku_id || index}-${index}`}
               className={onRowClick ? "clickableRow" : ""}
               onClick={() => onRowClick?.(row)}
+              onKeyDown={(event) => {
+                if (!onRowClick) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onRowClick(row);
+                }
+              }}
+              role={onRowClick ? "button" : undefined}
+              tabIndex={onRowClick ? 0 : undefined}
             >
               {columns.map((col) => (
                 <td key={col.key}>{col.render ? col.render(row[col.key], row) : row[col.key]}</td>
@@ -642,7 +719,7 @@ function RiskBadge({ type }) {
 function SeverityBadge({ row }) {
   const severity = severityFor(row);
   const cls = severity.toLowerCase();
-  return <span className={`severityBadge ${cls}`}>{severity}</span>;
+  return <span className={`severityBadge ${cls}`}>{severityLabel[severity] || severity}</span>;
 }
 
 function DecisionBrief({ title, rows, metrics, filename = "decision-brief.txt" }) {
@@ -650,11 +727,11 @@ function DecisionBrief({ title, rows, metrics, filename = "decision-brief.txt" }
   return (
     <div className="decisionBrief">
       <div>
-        <span>Executive decision brief</span>
+        <span>Brief điều hành</span>
         <strong>{title}</strong>
-        <p>Creates a concise operating brief for replenishment, risk review, and commercial follow-up.</p>
+        <p>Tạo brief vận hành ngắn gọn cho nhập hàng, review risk và follow-up thương mại.</p>
       </div>
-      <button type="button" className="primaryButton" onClick={() => downloadText(filename, text)}>Download Brief</button>
+      <button type="button" className="primaryButton" onClick={() => downloadText(filename, text)}>Tải brief</button>
     </div>
   );
 }
@@ -671,41 +748,80 @@ function Dashboard({ data }) {
   const overstock = risk.filter((r) => r.risk_type === "Overstock risk");
   const topProfit = [...summary].sort((a, b) => b.forecast_28d_profit - a.forecast_28d_profit).slice(0, 8);
   const actionQueue = [...stockout].sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy).slice(0, 8);
+  const topRisk = actionQueue[0];
+  const revenueAtRisk = stockout.reduce((s, row) => s + Number(row.revenue_at_risk_proxy || 0), 0);
+  const profitAtRisk = stockout.reduce((s, row) => s + Number(row.profit_at_risk_proxy || 0), 0);
 
   return (
     <>
-      <TopHeader pageTitle="Inventory Forecast Control Tower" subtitle="Monitor sales forecast, inventory risk, and priority actions." />
+      <TopHeader pageTitle="Trung tâm điều hành Forecast tồn kho" subtitle="Theo dõi Forecast bán hàng, risk inventory và hành động ưu tiên." />
+      <section className="commandBrief">
+        <div className="commandSignal">
+          <span>Trung tâm điều hành</span>
+          <h2>{topRisk?.sku_id || "SKU queue"} cần quyết định vận hành tiếp theo</h2>
+          <p>
+            Bảo vệ {money(topRisk?.revenue_at_risk_proxy || revenueAtRisk)} revenue exposure ngay, sau đó dùng scenario stress test
+            và AI brief để biến risk queue thành action plan sẵn sàng trình quản lý.
+          </p>
+        </div>
+        <div className="commandMetrics">
+          <ScopeMetric label="Revenue exposure" value={money(revenueAtRisk)} />
+          <ScopeMetric label="Profit exposure" value={money(profitAtRisk)} />
+          <ScopeMetric label="Hành động top" value={topRisk ? number(topRisk.suggested_order_qty, 1) : "0"} />
+        </div>
+        <div className="commandActions">
+          <button type="button" onClick={() => goToPage("risk")}>Mở risk queue</button>
+          <button type="button" onClick={() => goToPage("scenario")}>Stress-test delay</button>
+          <button type="button" onClick={() => goToRescue(topRisk?.sku_id)}>Rescue SKU top</button>
+          <button type="button" onClick={() => goToPage("agent")}>Tạo AI brief</button>
+        </div>
+      </section>
+      <section className="storyRail" aria-label="Demo operating story">
+        {[
+          ["Forecast sẵn sàng", "894K dòng SKU-day đã score"],
+          ["Risk queue", `${number(stockout.length + overstock.length)} SKU có cảnh báo`],
+          ["Planner", "Order được xếp theo impact"],
+          ["Rescue", "Transfer, substitute, expedite"],
+          ["AI brief", "Narrative sẵn sàng trình quản lý"],
+        ].map(([label, detail], index) => (
+          <div className="storyStep" key={label}>
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <strong>{label}</strong>
+            <p>{detail}</p>
+          </div>
+        ))}
+      </section>
       <div className="kpiGrid six">
-        <KpiCard icon={Boxes} label="Managed SKUs" value={number(summary.length)} sub="Active catalog" tone="teal" />
-        <KpiCard icon={TrendingUp} label="Next 28-day Demand" value={number(summary.reduce((s, r) => s + r.forecast_28d_qty, 0))} sub="Forecast batch" tone="cyan" />
-        <KpiCard icon={DollarSign} label="Estimated Revenue" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0))} sub="Forecast x price" tone="green" />
+        <KpiCard icon={Boxes} label="SKU quản lý" value={number(summary.length)} sub="Catalog đang hoạt động" tone="teal" />
+        <KpiCard icon={TrendingUp} label="Demand 28 ngày tới" value={number(summary.reduce((s, r) => s + r.forecast_28d_qty, 0))} sub="Forecast batch" tone="cyan" />
+        <KpiCard icon={DollarSign} label="Revenue ước tính" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0))} sub="Forecast x price" tone="green" />
         <KpiCard icon={BarChart3} label="Profit Proxy" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_profit, 0))} sub="Margin proxy" tone="green" />
         <KpiCard icon={AlertTriangle} label="Stockout Risk" value={number(stockout.length)} sub="Action queue" tone="red" />
-        <KpiCard icon={PackageSearch} label="Overstock Risk" value={number(overstock.length)} sub="Inventory control" tone="amber" />
+        <KpiCard icon={PackageSearch} label="Overstock Risk" value={number(overstock.length)} sub="Điều hành inventory" tone="amber" />
       </div>
-      <Card title="Priority Action Queue" tag="highest value at risk" className="priorityHeroCard">
+      <Card title="Action Queue ưu tiên" tag="value at risk cao nhất" className="priorityHeroCard">
         <DecisionBrief
-          title="28-day replenishment priority"
+          title="Ưu tiên nhập hàng 28 ngày"
           rows={actionQueue}
           filename="autoparts-priority-brief.txt"
           metrics={[
-            { label: "Stockout-risk SKUs", value: number(stockout.length) },
-            { label: "Overstock-risk SKUs", value: number(overstock.length) },
+            { label: "SKU stockout-risk", value: number(stockout.length) },
+            { label: "SKU overstock-risk", value: number(overstock.length) },
             { label: "Forecast revenue", value: money(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0)) },
           ]}
         />
         <DataTable rows={actionQueue} limit={8} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
           { key: "sku_id", label: "SKU" },
-          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
-          { key: "risk_type", label: "Risk Type", render: (v) => <RiskBadge type={v} /> },
+          { key: "severity", label: "Mức độ", render: (_, row) => <SeverityBadge row={row} /> },
+          { key: "risk_type", label: "Loại risk", render: (v) => <RiskBadge type={v} /> },
           { key: "revenue_at_risk_proxy", label: "Revenue at Risk", render: money },
           { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
-          { key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) },
-          { key: "recommended_action", label: "Recommended Action", render: (v) => actionLabel[v] || v },
+          { key: "suggested_order_qty", label: "Order đề xuất", render: (v) => number(v, 1) },
+          { key: "recommended_action", label: "Hành động khuyến nghị", render: (v) => actionLabel[v] || v },
         ]} />
       </Card>
       <div className="grid twoOne">
-        <Card title="Demand Forecast Overview" tag="next 28 days">
+        <Card title="Tổng quan Demand Forecast" tag="28 ngày tới">
           <ForecastChart
             showArea
             yLabel="Forecast demand"
@@ -718,20 +834,20 @@ function Dashboard({ data }) {
             ]}
           />
         </Card>
-        <Card title="Inventory Status" tag="alert mix">
+        <Card title="Trạng thái Inventory" tag="alert mix">
           <DonutChart stockout={stockout.length} overstock={overstock.length} />
         </Card>
       </div>
       <div className="grid two">
-        <Card title="Top SKUs by Profit Proxy" tag="commercial priority">
+        <Card title="Top SKU theo Profit Proxy" tag="ưu tiên thương mại">
           <DataTable rows={topProfit} limit={7} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
             { key: "sku_id", label: "SKU" },
-            { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
+            { key: "forecast_28d_qty", label: "Demand 28D", render: (v) => number(v, 1) },
             { key: "forecast_28d_revenue", label: "Revenue", render: money },
             { key: "forecast_28d_profit", label: "Profit Proxy", render: money },
           ]} />
         </Card>
-        <Card title="Alert Mix" tag="stockout vs overstock">
+        <Card title="Cơ cấu cảnh báo" tag="stockout vs overstock">
           <AlertMix stockout={stockout.length} overstock={overstock.length} />
         </Card>
       </div>
@@ -743,8 +859,8 @@ function AlertMix({ stockout, overstock }) {
   const total = Math.max(stockout + overstock, 1);
   return (
     <div className="alertMix">
-      <MixRow label="Stockout risk" value={stockout} color="#EF4444" total={total} />
-      <MixRow label="Overstock risk" value={overstock} color="#F59E0B" total={total} />
+      <MixRow label="Rủi ro stockout" value={stockout} color="#EF4444" total={total} />
+      <MixRow label="Rủi ro overstock" value={overstock} color="#F59E0B" total={total} />
     </div>
   );
 }
@@ -762,35 +878,120 @@ function ForecastEngine({ data }) {
   const { metadata, summary } = data;
   return (
     <>
-      <TopHeader pageTitle="Forecast Engine" subtitle="How the forecast batch is generated, calibrated, and translated into operational decision signals." />
+      <TopHeader pageTitle="Forecast Engine" subtitle="Cách Forecast batch được tạo, hiệu chỉnh và chuyển thành tín hiệu vận hành." />
       <div className="kpiGrid four">
-        <KpiCard icon={Boxes} label="Forecast Grain" value="SKU-day" sub={`${number(summary.length)} SKUs, 56 forecast days`} />
+        <KpiCard icon={Boxes} label="Forecast Grain" value="SKU-day" sub={`${number(summary.length)} SKU, 56 ngày Forecast`} />
         <KpiCard icon={TrendingUp} label="Public Score" value={metadata.public_score || "0.48498"} sub={`Rank #${metadata.public_rank || 2}`} tone="green" />
         <KpiCard icon={BarChart3} label="Private Score" value={metadata.private_score || "0.52425"} sub={`Rank #${metadata.private_rank || 4}`} tone="amber" />
-        <KpiCard icon={AlertTriangle} label="CV Baseline" value="0.587326" sub="Initial diagnostic" tone="red" />
+        <KpiCard icon={AlertTriangle} label="CV Baseline" value="0.587326" sub="Diagnostic ban đầu" tone="red" />
       </div>
       <div className="grid two">
-        <Card title="Forecast Architecture" tag="hybrid model">
+        <Card title="Kiến trúc Forecast" tag="hybrid model">
           <div className="stepper">
-            <Step n="01" title="Statistical backbone" text="Median-56, mean-21, weekday coefficients, and abnormal sales-day handling." />
+            <Step n="01" title="Statistical backbone" text="Median-56, mean-21, hệ số weekday và xử lý ngày bán bất thường." />
             <Step n="02" title="Direct XGBoost" text="Top 500 high-profit-weight SKUs are modeled with a Tweedie objective." />
-            <Step n="03" title="Calibration layer" text="Volume matching and historical SKU-ratio calibration help control total evaluation demand." />
+            <Step n="03" title="Calibration layer" text="Volume matching và historical SKU-ratio calibration giúp kiểm soát tổng demand đánh giá." />
           </div>
         </Card>
-        <Card title="Feature System" tag="about 79 features">
+        <Card title="Feature System" tag="khoảng 79 features">
           <div className="featureList">
             <Feature name="Demand history" value="lag_1, lag_7, lag_28; rolling mean 7/21/56/112; median 56" />
-            <Feature name="Sparse demand" value="active rate, active days, days since last sale, inactivity state" />
+            <Feature name="Sparse demand" value="active rate, active days, days since last sale, trạng thái inactivity" />
             <Feature name="Calendar" value="weekday, month, weekend, sin/cos seasonality" />
             <Feature name="Business signals" value="unit price, unit cost, profit weight, profit rank" />
           </div>
         </Card>
       </div>
-      <Card title="Product Layer Integration" tag="operations">
+      <Card title="Tích hợp Product Layer" tag="operations">
         <div className="integrationFlow">
           <span>Forecast file</span><ChevronRight size={18} /><span>Risk logic</span><ChevronRight size={18} /><span>Priority queue</span><ChevronRight size={18} /><span>Decision support</span>
         </div>
       </Card>
+    </>
+  );
+}
+
+function ModelOps({ data }) {
+  const { metadata, summary, risk, forecast } = data;
+  const forecastDates = forecast.map((row) => String(row.date)).filter(Boolean).sort();
+  const horizonStart = forecastDates[0] || "batch start";
+  const horizonEnd = forecastDates.at(-1) || "batch end";
+  const selectedFile = String(metadata.selected_submission || "submission_private_skuratio_g120_h50_clip0p75_1p8.csv");
+  const stockout = risk.filter((row) => row.risk_type === "Stockout risk");
+  const overstock = risk.filter((row) => row.risk_type === "Overstock risk");
+  const pipeline = [
+    { label: "Data ingest", detail: "Forecast, train, recent actuals", status: "Sẵn sàng", icon: Database },
+    { label: "Feature build", detail: "79 tín hiệu demand, sparse, calendar, margin", status: "Tốt", icon: Cpu },
+    { label: "Model scoring", detail: "XGBoost + statistical backbone", status: "Đã score", icon: Activity },
+    { label: "Calibration", detail: "SKU-ratio và total volume guardrail", status: "Đã khóa", icon: CheckCircle2 },
+    { label: "Risk publish", detail: "Stockout, overstock, planner queues", status: "Đã publish", icon: RefreshCw },
+  ];
+  const assets = [
+    { asset: selectedFile, role: "Forecast submission được chọn", status: `Public #${metadata.public_rank || 2} / Private #${metadata.private_rank || 4}` },
+    { asset: "sku_forecast_summary.csv", role: "Demand, revenue, profit proxy ở cấp SKU", status: `${number(summary.length)} SKU` },
+    { asset: "sku_risk_table.csv", role: "Decision queue stockout và overstock", status: `${number(risk.length)} dòng cảnh báo` },
+    { asset: "forecast_long.csv", role: "Đường Forecast theo ngày cho dashboard/detail", status: `${horizonStart} đến ${horizonEnd}` },
+    { asset: "recent_actuals.csv", role: "Ngữ cảnh demand gần nhất", status: "Đã nạp cho chi tiết SKU" },
+  ];
+
+  return (
+    <>
+      <TopHeader pageTitle="Phòng điều hành Model Ops" subtitle="Cho thấy Forecast batch được quản trị, refresh và publish thành decision intelligence như thế nào." />
+      <section className="opsHero">
+        <div>
+          <span>Demo batch telemetry</span>
+          <h2>Forecast pipeline đã sẵn sàng publish, với guardrail rõ trước mọi quyết định vận hành.</h2>
+          <p>
+            Control room này làm demo giống sản phẩm triển khai thật: BGK nhìn được độ mới dữ liệu, model version,
+            trạng thái calibration và ranh giới giữa intelligence từ CSV đã chuẩn bị với dữ liệu ERP/WMS live.
+          </p>
+        </div>
+        <div className="opsStamp">
+          <CalendarClock size={24} />
+          <span>Lần refresh gần nhất</span>
+          <strong>Batch T+0 · 08:00 ICT</strong>
+          <p>Lịch refresh tiếp theo: ngày mai 08:00 ICT</p>
+        </div>
+      </section>
+      <div className="kpiGrid four">
+        <KpiCard icon={Database} label="Forecast batch" value="56D" sub={`${number(summary.length)} SKU đã score`} tone="cyan" />
+        <KpiCard icon={Activity} label="Model version" value="XGB-R2" sub="Private SKU-ratio batch" tone="green" />
+        <KpiCard icon={CheckCircle2} label="Feature health" value="79/79" sub="Không có feature gap chặn publish" tone="green" />
+        <KpiCard icon={AlertTriangle} label="Drift guard" value={number(stockout.length + overstock.length)} sub="SKU cảnh báo đã publish" tone="amber" />
+      </div>
+      <Card title="Pipeline publish Forecast" tag="governed batch">
+        <div className="pipelineTimeline">
+          {pipeline.map((step, index) => {
+            const Icon = step.icon;
+            return (
+              <div className="pipelineStep" key={step.label}>
+                <span>{String(index + 1).padStart(2, "0")}</span>
+                <Icon size={22} />
+                <strong>{step.label}</strong>
+                <p>{step.detail}</p>
+                <em>{step.status}</em>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+      <div className="grid two">
+        <Card title="Data Assets" tag="CSV contract đã nạp">
+          <DataTable rows={assets} limit={assets.length} columns={[
+            { key: "asset", label: "Asset" },
+            { key: "role", label: "Vai trò" },
+            { key: "status", label: "Trạng thái" },
+          ]} />
+        </Card>
+        <Card title="Deployment Guardrails" tag="đâu là thật, đâu là giả định">
+          <div className="guardrailList">
+            <Feature name="Forecast output" value="Các batch table đã chuẩn bị vận hành dashboard, agent, risk monitor và scenario simulator." />
+            <Feature name="Inventory và lead time" value="Giả định scenario cho decision support demo vì contest data không có bảng inventory/WMS thật." />
+            <Feature name="Impact proxy" value="Revenue/profit impact là proxy tính từ Forecast quantity và trường sales/cost lịch sử." />
+            <Feature name="Operator handoff" value="Mọi hành động vẫn cần xác thực tồn kho thật, branch stock và supplier trước khi mua hàng." />
+          </div>
+        </Card>
+      </div>
     </>
   );
 }
@@ -820,33 +1021,33 @@ function RiskMonitor({ data }) {
 
   return (
     <>
-      <TopHeader pageTitle="SKU Risk Monitor" subtitle="Rank SKUs by stockout or overstock exposure using forecast output and stated inventory assumptions." />
-      <Card title="Risk Queue Filters" tag="priority queue">
+      <TopHeader pageTitle="SKU Risk Monitor" subtitle="Xếp hạng SKU theo mức phơi nhiễm stockout/overstock dựa trên Forecast output và giả định inventory." />
+      <Card title="Bộ lọc Risk Queue" tag="priority queue">
         <div className="filterRow">
-          <label>Alert group<select value={group} onChange={(e) => setGroup(e.target.value)}><option>All</option><option>Stockout risk</option><option>Overstock risk</option></select></label>
-          <label>SKUs to show<input type="range" min="5" max="100" step="5" value={topN} onChange={(e) => setTopN(Number(e.target.value))} /><span>{topN}</span></label>
-          <label>Sort by<select value={sortBy} onChange={(e) => setSortBy(e.target.value)}><option value="profit_at_risk_proxy">Profit at risk</option><option value="revenue_at_risk_proxy">Revenue at risk</option><option value="risk_score">Risk score</option></select></label>
-          <label>Search SKU<input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="SKU-00003" /></label>
+          <label>Nhóm cảnh báo<select value={group} onChange={(e) => setGroup(e.target.value)}><option value="All">Tất cả</option><option value="Stockout risk">Stockout risk</option><option value="Overstock risk">Overstock risk</option></select></label>
+          <label>Số SKU hiển thị<input type="range" min="5" max="100" step="5" value={topN} onChange={(e) => setTopN(Number(e.target.value))} /><span>{topN}</span></label>
+          <label>Sắp xếp theo<select value={sortBy} onChange={(e) => setSortBy(e.target.value)}><option value="profit_at_risk_proxy">Profit at risk</option><option value="revenue_at_risk_proxy">Revenue at risk</option><option value="risk_score">Risk score</option></select></label>
+          <label>Tìm SKU<input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="SKU-00003" /></label>
         </div>
       </Card>
       <div className="kpiGrid four">
-        <KpiCard icon={Boxes} label="SKUs in list" value={number(filtered.length)} sub="Current filters" />
-        <KpiCard icon={DollarSign} label="Revenue at risk" value={money(revenue)} sub="Visible list" tone="red" />
-        <KpiCard icon={BarChart3} label="Profit proxy at risk" value={money(profit)} sub="Visible list" tone="amber" />
-        <KpiCard icon={Gauge} label="Avg. risk score" value={number(avgRisk, 1)} sub="Scale 0-100" tone="teal" />
+        <KpiCard icon={Boxes} label="SKU trong list" value={number(filtered.length)} sub="Theo bộ lọc hiện tại" />
+        <KpiCard icon={DollarSign} label="Revenue at risk" value={money(revenue)} sub="Danh sách đang xem" tone="red" />
+        <KpiCard icon={BarChart3} label="Profit proxy at risk" value={money(profit)} sub="Danh sách đang xem" tone="amber" />
+        <KpiCard icon={Gauge} label="Risk score TB" value={number(avgRisk, 1)} sub="Thang 0-100" tone="teal" />
       </div>
-      <Card title="Risk Table">
+      <Card title="Bảng Risk">
         <DataTable rows={filtered} limit={filtered.length} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
           { key: "sku_id", label: "SKU" },
-          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
-          { key: "risk_type", label: "Alert Group", render: (v) => <RiskBadge type={v} /> },
+          { key: "severity", label: "Mức độ", render: (_, row) => <SeverityBadge row={row} /> },
+          { key: "risk_type", label: "Nhóm cảnh báo", render: (v) => <RiskBadge type={v} /> },
           { key: "risk_score", label: "Risk Score", render: (v) => <RiskScore value={v} /> },
-          { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
-          { key: "current_stock_assumed", label: "Assumed Stock", render: (v) => number(v, 1) },
+          { key: "forecast_28d_qty", label: "Demand 28D", render: (v) => number(v, 1) },
+          { key: "current_stock_assumed", label: "Tồn giả định", render: (v) => number(v, 1) },
           { key: "reorder_point", label: "Reorder Point", render: (v) => number(v, 1) },
           { key: "revenue_at_risk_proxy", label: "Revenue at Risk", render: money },
           { key: "profit_at_risk_proxy", label: "Profit Proxy at Risk", render: money },
-          { key: "recommended_action", label: "Recommendation", render: (v) => actionLabel[v] || v },
+          { key: "recommended_action", label: "Khuyến nghị", render: (v) => actionLabel[v] || v },
         ]} />
       </Card>
     </>
@@ -877,39 +1078,39 @@ function ReplenishmentPlanner({ data }) {
 
   return (
     <>
-      <TopHeader pageTitle="Replenishment Action Planner" subtitle="Convert forecast risk signals into an operating plan for replenishment, review, and inventory control." />
+      <TopHeader pageTitle="Planner hành động nhập hàng" subtitle="Chuyển tín hiệu Forecast risk thành kế hoạch vận hành cho nhập hàng, review và điều hành inventory." />
       <div className="kpiGrid four">
-        <KpiCard icon={ClipboardList} label="Action Items" value={number(rows.length)} sub="Visible plan" />
-        <KpiCard icon={AlertTriangle} label="High Urgency" value={number(high.length)} sub="Needs fast review" tone="red" />
-        <KpiCard icon={Boxes} label="Suggested Order Qty" value={number(suggestedQty, 1)} sub="Scenario-based" tone="cyan" />
-        <KpiCard icon={DollarSign} label="Profit Protected" value={shortMoney(protectedProfit)} sub="Proxy impact" tone="green" />
+        <KpiCard icon={ClipboardList} label="Action items" value={number(rows.length)} sub="Plan đang xem" />
+        <KpiCard icon={AlertTriangle} label="Ưu tiên cao" value={number(high.length)} sub="Cần review nhanh" tone="red" />
+        <KpiCard icon={Boxes} label="Order qty đề xuất" value={number(suggestedQty, 1)} sub="Dựa trên scenario" tone="cyan" />
+        <KpiCard icon={DollarSign} label="Profit protected" value={shortMoney(protectedProfit)} sub="Proxy impact" tone="green" />
       </div>
-      <Card title="Planner Controls" tag="workflow filters">
+      <Card title="Điều khiển Planner" tag="workflow filters">
         <div className="filterRow twoCols">
-          <label>Urgency<select value={filter} onChange={(event) => setFilter(event.target.value)}><option>All</option><option>High</option><option>Medium</option><option>Low</option></select></label>
-          <label>Owner<select value={owner} onChange={(event) => setOwner(event.target.value)}><option>All</option><option>Inventory Lead</option><option>Sales Ops</option></select></label>
+          <label>Độ ưu tiên<select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="All">Tất cả</option><option value="High">Cao</option><option value="Medium">Trung bình</option><option value="Low">Thấp</option></select></label>
+          <label>Owner<select value={owner} onChange={(event) => setOwner(event.target.value)}><option value="All">Tất cả</option><option>Inventory Lead</option><option>Sales Ops</option></select></label>
         </div>
       </Card>
-      <Card title="Replenishment Action Plan" tag="approve, defer, or review">
+      <Card title="Kế hoạch hành động nhập hàng" tag="duyệt, hoãn hoặc review">
         <DataTable rows={rows} limit={rows.length} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
           { key: "sku_id", label: "SKU" },
-          { key: "urgency", label: "Urgency", render: (value) => <span className={`urgencyBadge ${String(value).toLowerCase()}`}>{value}</span> },
-          { key: "risk_type", label: "Alert", render: (value) => <RiskBadge type={value} /> },
-          { key: "suggested_order_qty", label: "Suggested Order", render: (value) => number(value, 1) },
-          { key: "expected_stockout_date", label: "Expected Stockout", render: (value) => value },
-          { key: "lead_time_impact", label: "Lead Time Impact" },
-          { key: "business_impact", label: "Profit Protected", render: money },
+          { key: "urgency", label: "Ưu tiên", render: (value) => <span className={`urgencyBadge ${String(value).toLowerCase()}`}>{urgencyLabel[value] || value}</span> },
+          { key: "risk_type", label: "Cảnh báo", render: (value) => <RiskBadge type={value} /> },
+          { key: "suggested_order_qty", label: "Order đề xuất", render: (value) => number(value, 1) },
+          { key: "expected_stockout_date", label: "Stockout dự kiến", render: (value) => value },
+          { key: "lead_time_impact", label: "Lead time impact" },
+          { key: "business_impact", label: "Profit protected", render: money },
           { key: "owner", label: "Owner" },
           { key: "due_date", label: "Due" },
-          { key: "status", label: "Status", render: (value, row) => (
+          { key: "status", label: "Trạng thái", render: (value, row) => (
             <select className="statusSelect" value={value} onClick={(event) => event.stopPropagation()} onChange={(event) => setStatus(row.sku_id, event.target.value)}>
-              <option>Open</option><option>In Review</option><option>Approved</option><option>Deferred</option><option>Resolved</option>
+              {Object.entries(statusLabel).map(([status, label]) => <option key={status} value={status}>{label}</option>)}
             </select>
           ) },
           { key: "rescue", label: "Rescue", render: (_, row) => row.risk_type === "Stockout risk"
             ? <button type="button" className="tableActionButton" onClick={(event) => { event.stopPropagation(); goToRescue(row.sku_id); }}>Rescue</button>
-            : <span className="mutedCell">Not needed</span> },
-          { key: "reason", label: "Reason" },
+            : <span className="mutedCell">Chưa cần</span> },
+          { key: "reason", label: "Lý do" },
         ]} />
       </Card>
     </>
@@ -945,92 +1146,92 @@ function StockoutRescueRoom({ data }) {
 
   const brief = rescueBriefText(row, plan, selectedActions);
   const supplierEmail = [
-    `Subject: Expedite request for ${row.sku_id}`,
+    `Subject: Yêu cầu expedite cho ${row.sku_id}`,
     "",
-    `Hi ${plan.supplier.supplier},`,
+    `Chào ${plan.supplier.supplier},`,
     "",
-    `We are reviewing a stockout rescue plan for ${row.sku_id}. Please confirm whether ${number(plan.supplier.expedite_qty)} units can be expedited under the requested lead time ${plan.supplier.requested_lead_time}.`,
+    `Chúng tôi đang review kế hoạch rescue stockout cho ${row.sku_id}. Vui lòng xác nhận có thể expedite ${number(plan.supplier.expedite_qty)} units theo lead time yêu cầu ${plan.supplier.requested_lead_time} hay không.`,
     "",
-    `Current scenario impact: ${money(plan.impact.directRevenue)} direct revenue at risk and ${money(plan.impact.bundleRevenue)} bundle revenue at risk.`,
+    `Scenario impact hiện tại: ${money(plan.impact.directRevenue)} direct revenue at risk và ${money(plan.impact.bundleRevenue)} bundle revenue at risk.`,
     "",
-    "Please confirm availability, earliest ship date, and any expedite premium.",
+    "Vui lòng xác nhận availability, ngày ship sớm nhất và expedite premium nếu có.",
   ].join("\n");
 
   return (
     <>
-      <TopHeader pageTitle="Stockout Rescue Room" subtitle="Turn a critical SKU risk signal into a rescue plan: substitute, transfer, expedite, and budget-prioritize actions." />
-      <Card title="Rescue Target" tag="critical SKU">
+      <TopHeader pageTitle="Stockout Rescue Room" subtitle="Biến tín hiệu SKU risk nghiêm trọng thành kế hoạch rescue: substitute, transfer, expedite và ưu tiên theo budget." />
+      <Card title="Mục tiêu Rescue" tag="critical SKU">
         <div className="filterRow twoCols">
-          <label>SKU to rescue<select value={sku} onChange={(event) => selectSku(event.target.value)}>{rescueCandidates.map((item) => <option key={item.sku_id}>{item.sku_id}</option>)}</select></label>
-          <label>Available rescue budget (VND)<input value={budget} onChange={(event) => setBudget(Number(event.target.value || 0))} /></label>
+          <label>SKU cần rescue<select value={sku} onChange={(event) => selectSku(event.target.value)}>{rescueCandidates.map((item) => <option key={item.sku_id}>{item.sku_id}</option>)}</select></label>
+          <label>Budget rescue khả dụng (VND)<input value={budget} onChange={(event) => setBudget(Number(event.target.value || 0))} /></label>
         </div>
       </Card>
       <div className="kpiGrid four">
-        <KpiCard icon={AlertTriangle} label="Severity" value={plan.impact.severity} sub="Rescue priority" tone="red" />
-        <KpiCard icon={Boxes} label="Unfulfilled Demand" value={number(plan.impact.unfulfilled, 1)} sub="Scenario units" tone="amber" />
-        <KpiCard icon={DollarSign} label="Direct Revenue Risk" value={money(plan.impact.directRevenue)} sub="SKU-level risk" tone="green" />
+        <KpiCard icon={AlertTriangle} label="Mức độ" value={severityLabel[plan.impact.severity] || plan.impact.severity} sub="Ưu tiên rescue" tone="red" />
+        <KpiCard icon={Boxes} label="Unfulfilled demand" value={number(plan.impact.unfulfilled, 1)} sub="Scenario units" tone="amber" />
+        <KpiCard icon={DollarSign} label="Direct Revenue Risk" value={money(plan.impact.directRevenue)} sub="Risk cấp SKU" tone="green" />
         <KpiCard icon={BarChart3} label="Bundle Revenue Risk" value={money(plan.impact.bundleRevenue)} sub="Service impact" tone="red" />
       </div>
-      <Card title="Impact: What Breaks If This SKU Stocks Out?" tag="service bundle risk">
+      <Card title="Impact: điều gì bị ảnh hưởng nếu SKU này stockout?" tag="service bundle risk">
         <div className="rescueImpactGrid">
           <ImpactTile label="Forecast demand" value={number(plan.impact.forecastDemand, 1)} />
-          <ImpactTile label="Assumed stock" value={number(plan.impact.assumedStock, 1)} />
-          <ImpactTile label="Affected bundles" value={number(plan.impact.affectedBundles)} detail={plan.impact.serviceBundles.join(", ")} />
-          <ImpactTile label="Affected vehicle models" value={number(plan.impact.affectedModels)} detail={plan.impact.vehicleModels.join(", ")} />
+          <ImpactTile label="Tồn giả định" value={number(plan.impact.assumedStock, 1)} />
+          <ImpactTile label="Bundle bị ảnh hưởng" value={number(plan.impact.affectedBundles)} detail={plan.impact.serviceBundles.join(", ")} />
+          <ImpactTile label="Dòng xe bị ảnh hưởng" value={number(plan.impact.affectedModels)} detail={plan.impact.vehicleModels.join(", ")} />
         </div>
-        <p className="agentNote">Bundle and vehicle impact are deterministic scenario assumptions derived from SKU ID for demo storytelling. Validate against real catalog compatibility before execution.</p>
+        <p className="agentNote">Bundle và vehicle impact là giả định scenario sinh từ SKU ID để kể câu chuyện demo. Cần đối chiếu catalog compatibility thật trước khi triển khai.</p>
       </Card>
       <div className="grid three">
         <RescueOptionCard title="Option A - Substitute Part" tag="compatibility match">
           <DataTable rows={plan.substitutes} limit={3} columns={[
             { key: "sku_id", label: "Substitute SKU" },
             { key: "compatibility", label: "Compatibility", render: (value) => `${number(value)}%` },
-            { key: "available_stock", label: "Available Stock", render: (value) => number(value, 1) },
-            { key: "revenue_recovered", label: "Revenue Recovered", render: money },
+            { key: "available_stock", label: "Stock khả dụng", render: (value) => number(value, 1) },
+            { key: "revenue_recovered", label: "Revenue recover", render: money },
             { key: "risk", label: "Risk" },
           ]} />
         </RescueOptionCard>
         <RescueOptionCard title="Option B - Branch Transfer" tag="rebalance stock">
           <DataTable rows={plan.transfers} limit={2} columns={[
-            { key: "from", label: "From" },
-            { key: "to", label: "To" },
+            { key: "from", label: "Từ" },
+            { key: "to", label: "Đến" },
             { key: "transfer_qty", label: "Transfer Qty", render: (value) => number(value, 1) },
-            { key: "revenue_protected", label: "Revenue Protected", render: money },
-            { key: "overstock_reduced", label: "Overstock Reduced" },
+            { key: "revenue_protected", label: "Revenue protected", render: money },
+            { key: "overstock_reduced", label: "Giảm overstock" },
           ]} />
         </RescueOptionCard>
         <RescueOptionCard title="Option C - Expedite Supplier" tag="lead-time compression">
           <div className="supplierRescue">
             <span>Supplier</span><strong>{plan.supplier.supplier}</strong>
-            <span>Scenario-linked SKUs</span><strong>{number(plan.supplier.scenario_skus)}</strong>
-            <span>Requested lead time</span><strong>{plan.supplier.requested_lead_time}</strong>
+            <span>SKU liên quan trong scenario</span><strong>{number(plan.supplier.scenario_skus)}</strong>
+            <span>Lead time yêu cầu</span><strong>{plan.supplier.requested_lead_time}</strong>
             <span>Revenue at risk</span><strong>{money(plan.supplier.revenue_at_risk)}</strong>
           </div>
         </RescueOptionCard>
       </div>
-      <Card title="Budget Optimizer" tag="highest impact rescue mix">
+      <Card title="Budget Optimizer" tag="rescue mix impact cao nhất">
         <div className="scenarioInsight">
-          <strong>With {money(budget)} rescue budget, the selected plan protects {money(protectedRevenue)} revenue using {number(selectedActions.length)} prioritized actions.</strong>
-          <span>Actions are ranked by revenue protected, estimated cost, and severity. Cost is a scenario proxy, not accounting data.</span>
+          <strong>Với budget rescue {money(budget)}, plan được chọn bảo vệ {money(protectedRevenue)} revenue bằng {number(selectedActions.length)} hành động ưu tiên.</strong>
+          <span>Actions được xếp theo revenue protected, chi phí ước tính và severity. Cost là scenario proxy, không phải accounting data.</span>
         </div>
         <DataTable rows={plan.rescueActions} limit={plan.rescueActions.length} columns={[
-          { key: "rank", label: "Rank", render: (value) => number(value) },
+          { key: "rank", label: "Hạng", render: (value) => number(value) },
           { key: "sku_id", label: "SKU" },
           { key: "action", label: "Action" },
-          { key: "cost", label: "Cost", render: money },
-          { key: "revenue_protected", label: "Revenue Protected", render: money },
+          { key: "cost", label: "Chi phí", render: money },
+          { key: "revenue_protected", label: "Revenue protected", render: money },
           { key: "decision_score", label: "Decision Score", render: (value) => number(value) },
-          { key: "roi", label: "ROI Proxy", render: (value) => value >= 99 ? "No-cost" : `${number(value, 1)}x` },
+          { key: "roi", label: "ROI Proxy", render: (value) => value >= 99 ? "Không tốn cost" : `${number(value, 1)}x` },
         ]} />
       </Card>
-      <Card title="AI Copilot Action Brief" tag={approved ? "approved" : "ready for approval"}>
+      <Card title="AI Copilot Action Brief" tag={approved ? "đã duyệt" : "sẵn sàng duyệt"}>
         <div className="rescueBriefBox">
           <pre>{brief}</pre>
           <div className="rescueBriefActions">
-            <button type="button" className="primaryButton" onClick={() => downloadText(`${row.sku_id}-manager-brief.txt`, brief)}>Generate manager brief</button>
-            <button type="button" className="primaryButton" onClick={() => downloadText(`${row.sku_id}-supplier-email.txt`, supplierEmail)}>Generate supplier email</button>
-            <button type="button" className="primaryButton" onClick={() => downloadText(`${row.sku_id}-rescue-plan.txt`, brief)}>Export rescue plan</button>
-            <button type="button" className="primaryButton" onClick={() => setApproved(true)}>{approved ? "Approved" : "Mark as approved"}</button>
+            <button type="button" className="primaryButton" onClick={() => downloadText(`${row.sku_id}-manager-brief.txt`, brief)}>Tạo manager brief</button>
+            <button type="button" className="primaryButton" onClick={() => downloadText(`${row.sku_id}-supplier-email.txt`, supplierEmail)}>Tạo supplier email</button>
+            <button type="button" className="primaryButton" onClick={() => downloadText(`${row.sku_id}-rescue-plan.txt`, brief)}>Tải rescue plan</button>
+            <button type="button" className="primaryButton" onClick={() => setApproved(true)}>{approved ? "Đã duyệt" : "Đánh dấu đã duyệt"}</button>
           </div>
         </div>
       </Card>
@@ -1077,18 +1278,18 @@ function ForecastDetail({ data }) {
   const forecastRows = skuForecast.map((r) => ({ date: r.date, value: r.forecast_qty }));
   const chartConfig = {
     post: {
-      title: "Post-train Forecast vs Simulated Market",
+      title: "Forecast sau train vs Market mô phỏng",
       tag: "hero analysis",
-      note: "This is the main demo view: the model forecast is shown against simulated future market data for storytelling after the train period.",
+      note: "Đây là view demo chính: model Forecast được so với market data mô phỏng trong tương lai để kể câu chuyện sau giai đoạn train.",
       series: [
         { name: "Forecast", color: "#1E40AF", points: forecastRows },
-        { name: "Simulated market data", color: "#F97316", dash: "7 5", points: simulatedRows },
+        { name: "Market data mô phỏng", color: "#F97316", dash: "7 5", points: simulatedRows },
       ],
     },
     forecastOnly: {
-      title: "Model Forecast Only",
+      title: "Chỉ hiển thị Model Forecast",
       tag: "model output",
-      note: "This view shows only the model output for the next 28 days after the train period. No historical actual sales are overlaid on future dates.",
+      note: "View này chỉ hiển thị model output cho 28 ngày sau giai đoạn train. Không overlay actual sales lịch sử lên ngày tương lai.",
       series: [
         { name: "Forecast", color: "#1E40AF", points: forecastRows },
       ],
@@ -1127,68 +1328,68 @@ function ForecastDetail({ data }) {
 
   return (
     <>
-      <TopHeader pageTitle="Forecast Detail" subtitle="SKU-level view of recent actual sales, next 28-day forecast, demand change, and revenue/profit proxy." />
+      <TopHeader pageTitle="Chi tiết Forecast" subtitle="Góc nhìn cấp SKU về actual sales gần đây, Forecast 28 ngày tới, demand change và revenue/profit proxy." />
       <Card title="SKU Workspace" tag="drilldown">
         <div className="filterRow twoCols">
-          <label>SKU workspace<select><option>Commercial priority</option><option>Stockout risk</option><option>Overstock risk</option></select></label>
-          <label>Selected SKU<select value={sku} onChange={(e) => selectSku(e.target.value)}>{skuOptions.map((r) => <option key={r.sku_id}>{r.sku_id}</option>)}</select></label>
+          <label>SKU workspace<select><option>Ưu tiên thương mại</option><option>Stockout risk</option><option>Overstock risk</option></select></label>
+          <label>SKU đang chọn<select value={sku} onChange={(e) => selectSku(e.target.value)}>{skuOptions.map((r) => <option key={r.sku_id}>{r.sku_id}</option>)}</select></label>
         </div>
       </Card>
       <div className="kpiGrid five">
-        <KpiCard icon={Boxes} label="Last 28D Actual Sales" value={number(row.last_28d_qty, 1)} sub="Historical train data" />
-        <KpiCard icon={TrendingUp} label="28D Forecast Demand" value={number(row.forecast_28d_qty, 1)} sub="From forecast batch" tone="cyan" />
-        <KpiCard icon={Gauge} label="Demand Change" value={`${number(row.demand_change_pct, 1)}%`} sub="vs. last 28D" tone="amber" />
-        <KpiCard icon={DollarSign} label="Estimated Revenue" value={money(row.forecast_28d_revenue)} sub="Financial impact" tone="green" />
-        <KpiCard icon={BarChart3} label="Profit Proxy" value={money(row.forecast_28d_profit)} sub="Financial impact" tone="red" />
+        <KpiCard icon={Boxes} label="Actual sales 28D gần nhất" value={number(row.last_28d_qty, 1)} sub="Dữ liệu train lịch sử" />
+        <KpiCard icon={TrendingUp} label="Forecast Demand 28D" value={number(row.forecast_28d_qty, 1)} sub="Từ Forecast batch" tone="cyan" />
+        <KpiCard icon={Gauge} label="Demand Change" value={`${number(row.demand_change_pct, 1)}%`} sub="so với 28D gần nhất" tone="amber" />
+        <KpiCard icon={DollarSign} label="Revenue ước tính" value={money(row.forecast_28d_revenue)} sub="Tác động tài chính" tone="green" />
+        <KpiCard icon={BarChart3} label="Profit Proxy" value={money(row.forecast_28d_profit)} sub="Tác động tài chính" tone="red" />
       </div>
       <div className="grid two">
-        <Card title={row.risk_type === "Healthy" ? "Decision Drivers" : "Why Is This SKU Risky?"} tag="explainability">
+        <Card title={row.risk_type === "Healthy" ? "Tín hiệu quyết định" : "Vì sao SKU này rủi ro?"} tag="explainability">
           <div className="driverList">
             {riskDrivers.map((driver) => <RiskDriver key={driver.label} driver={driver} />)}
           </div>
         </Card>
-        <Card title="Decision Readiness" tag="action rationale">
+        <Card title="Mức sẵn sàng quyết định" tag="action rationale">
           <div className="readinessPanel">
-            <div><span>Risk points explained</span><strong>{number(riskPointTotal)}</strong><p>Rule-based breakdown from forecast demand, stock assumptions, and financial exposure.</p></div>
-            <div><span>Expected stockout</span><strong>{expectedStockoutDate(row)}</strong><p>{leadTimeImpact(row)}</p></div>
-            <div><span>Planner reason</span><strong>{urgencyFor(row)} urgency</strong><p>{plannerReason(row)}</p></div>
+            <div><span>Điểm risk được giải thích</span><strong>{number(riskPointTotal)}</strong><p>Rule-based breakdown từ Forecast demand, giả định stock và financial exposure.</p></div>
+            <div><span>Stockout dự kiến</span><strong>{expectedStockoutDate(row)}</strong><p>{leadTimeImpact(row)}</p></div>
+            <div><span>Lý do planner</span><strong>Ưu tiên {urgencyLabel[urgencyFor(row)] || urgencyFor(row)}</strong><p>{plannerReason(row)}</p></div>
           </div>
         </Card>
       </div>
       <Card title={chartConfig.title} tag={chartConfig.tag} className="heroChartCard">
         <DecisionBrief
-          title={`${sku} replenishment decision`}
+          title={`Quyết định nhập hàng cho ${sku}`}
           rows={[{ ...row, sku_id: sku, risk_type: row.risk_type || "Watchlist", profit_at_risk_proxy: row.profit_at_risk_proxy || 0, recommended_action: row.recommended_action || "Monitor" }]}
           filename={`${sku}-decision-brief.txt`}
           metrics={[
-            { label: "28D forecast demand", value: number(row.forecast_28d_qty, 1) },
-            { label: "Estimated revenue", value: money(row.forecast_28d_revenue) },
+            { label: "Forecast demand 28D", value: number(row.forecast_28d_qty, 1) },
+            { label: "Revenue ước tính", value: money(row.forecast_28d_revenue) },
             { label: "Profit proxy", value: money(row.forecast_28d_profit) },
           ]}
         />
         <div className="rescueActionBar">
           <div>
-            <span>{canRescueSelectedSku ? "Stockout rescue workflow" : "Stockout rescue queue"}</span>
-            <strong>{canRescueSelectedSku ? "Convert this SKU risk into substitute, transfer, expedite, and budget actions." : "This SKU is not flagged as stockout risk; open the highest-priority rescue queue instead."}</strong>
+            <span>{canRescueSelectedSku ? "Workflow rescue stockout" : "Queue rescue stockout"}</span>
+            <strong>{canRescueSelectedSku ? "Chuyển SKU risk này thành hành động substitute, transfer, expedite và budget." : "SKU này chưa bị gắn stockout risk; mở rescue queue ưu tiên cao nhất thay thế."}</strong>
           </div>
-          <button type="button" className="primaryButton" onClick={() => goToRescue(canRescueSelectedSku ? sku : topStockoutSku)}>{canRescueSelectedSku ? "Rescue this SKU" : "Open rescue queue"}</button>
+          <button type="button" className="primaryButton" onClick={() => goToRescue(canRescueSelectedSku ? sku : topStockoutSku)}>{canRescueSelectedSku ? "Rescue SKU này" : "Mở rescue queue"}</button>
         </div>
         <ForecastChart
           height={470}
-          yLabel="Daily quantity"
+          yLabel="Số lượng/ngày"
           series={chartConfig.series}
         />
         <div className="segmented">
-          <button type="button" className={chartView === "post" ? "active" : ""} onClick={() => setChartView("post")}>Future forecast vs simulated data</button>
-          <button type="button" className={chartView === "forecastOnly" ? "active" : ""} onClick={() => setChartView("forecastOnly")}>Forecast only</button>
+          <button type="button" className={chartView === "post" ? "active" : ""} onClick={() => setChartView("post")}>Forecast tương lai vs dữ liệu mô phỏng</button>
+          <button type="button" className={chartView === "forecastOnly" ? "active" : ""} onClick={() => setChartView("forecastOnly")}>Chỉ Forecast</button>
         </div>
         <p className="note">{chartConfig.note}</p>
       </Card>
-      <Card title="SKU Compare Mode" tag="priority comparison">
+      <Card title="Chế độ so sánh SKU" tag="priority comparison">
         <div className="compareControls">
-          <label>Primary SKU<input value={sku} readOnly /></label>
+          <label>SKU chính<input value={sku} readOnly /></label>
           {[0, 1].map((index) => (
-            <label key={index}>Compare SKU {index + 1}
+            <label key={index}>SKU so sánh {index + 1}
               <select value={comparePeers[index] || ""} onChange={(event) => {
                 const next = [...comparePeers];
                 next[index] = event.target.value;
@@ -1203,28 +1404,28 @@ function ForecastDetail({ data }) {
           {compareRows.map((item, index) => (
             <div className={`compareCard ${item.sku_id === sku ? "primary" : ""}`} key={item.sku_id}>
               <div className="compareTitle">
-                <span>{item.sku_id === sku ? "Primary" : `Peer ${index}`}</span>
+                <span>{item.sku_id === sku ? "Chính" : `Peer ${index}`}</span>
                 <strong>{item.sku_id}</strong>
               </div>
               <div className="compareMetrics">
-                <CompareMetric label="28D Demand" value={number(item.forecast_28d_qty, 1)} max={Math.max(...compareRows.map((r) => Number(r.forecast_28d_qty || 0)), 1)} raw={item.forecast_28d_qty} />
+                <CompareMetric label="Demand 28D" value={number(item.forecast_28d_qty, 1)} max={Math.max(...compareRows.map((r) => Number(r.forecast_28d_qty || 0)), 1)} raw={item.forecast_28d_qty} />
                 <CompareMetric label="Revenue" value={money(item.forecast_28d_revenue)} max={Math.max(...compareRows.map((r) => Number(r.forecast_28d_revenue || 0)), 1)} raw={item.forecast_28d_revenue} tone="green" />
                 <CompareMetric label="Profit Proxy" value={money(item.forecast_28d_profit)} max={Math.max(...compareRows.map((r) => Number(r.forecast_28d_profit || 0)), 1)} raw={item.forecast_28d_profit} tone="green" />
                 <CompareMetric label="Demand Change" value={`${number(item.demand_change_pct, 1)}%`} max={Math.max(...compareRows.map((r) => Math.abs(Number(r.demand_change_pct || 0))), 1)} raw={Math.abs(Number(item.demand_change_pct || 0))} tone="amber" />
-                <CompareMetric label="Suggested Order" value={number(item.suggested_order_qty, 1)} max={Math.max(...compareRows.map((r) => Number(r.suggested_order_qty || 0)), 1)} raw={item.suggested_order_qty} tone="red" />
+                <CompareMetric label="Order đề xuất" value={number(item.suggested_order_qty, 1)} max={Math.max(...compareRows.map((r) => Number(r.suggested_order_qty || 0)), 1)} raw={item.suggested_order_qty} tone="red" />
               </div>
-              <button type="button" className="compareDrillButton" onClick={() => goToSkuDetail(item.sku_id)}>Open SKU Detail</button>
+              <button type="button" className="compareDrillButton" onClick={() => goToSkuDetail(item.sku_id)}>Mở chi tiết SKU</button>
             </div>
           ))}
         </div>
         <DataTable rows={compareRows} limit={compareRows.length} onRowClick={(item) => goToSkuDetail(item.sku_id)} columns={[
           { key: "sku_id", label: "SKU" },
-          { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
+          { key: "forecast_28d_qty", label: "Demand 28D", render: (v) => number(v, 1) },
           { key: "forecast_28d_revenue", label: "Revenue", render: money },
           { key: "forecast_28d_profit", label: "Profit Proxy", render: money },
           { key: "demand_change_pct", label: "Demand Change", render: (v) => `${number(v, 1)}%` },
-          { key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) },
-          { key: "risk_type", label: "Risk Signal", render: (v) => <RiskBadge type={v} /> },
+          { key: "suggested_order_qty", label: "Order đề xuất", render: (v) => number(v, 1) },
+          { key: "risk_type", label: "Tín hiệu risk", render: (v) => <RiskBadge type={v} /> },
         ]} />
       </Card>
     </>
@@ -1246,7 +1447,7 @@ function RiskDriver({ driver }) {
     <div className={`riskDriver ${driver.tone}`}>
       <div>
         <span>{driver.label}</span>
-        <strong>{driver.points} pts</strong>
+        <strong>{driver.points} điểm</strong>
       </div>
       <i><b style={{ width: `${Math.min(driver.points, 40) * 2.5}%` }} /></i>
       <p>{driver.detail}</p>
@@ -1261,7 +1462,12 @@ function Agent({ data }) {
   const [selectedSku, setSelectedSku] = React.useState(sessionStorage.getItem("selectedSku") || "");
   const contextRow = summary.find((row) => row.sku_id === selectedSku);
   const contextRisk = risk.find((row) => row.sku_id === selectedSku);
-  const answer = React.useMemo(() => buildAgentAnswer(submitted, summary, risk, selectedSku), [submitted, summary, risk, selectedSku]);
+  const answer = React.useMemo(() => localizeAgentAnswer(buildAgentAnswer(submitted, summary, risk, selectedSku), submitted), [submitted, summary, risk, selectedSku]);
+  const quickPrompts = [
+    "SKU nào cần nhập gấp?",
+    "Tạo brief cho quản lý tuần này",
+    "Stress test supplier delay",
+  ];
 
   React.useEffect(() => {
     const syncSku = (event) => setSelectedSku(String(event.detail || sessionStorage.getItem("selectedSku") || ""));
@@ -1279,27 +1485,32 @@ function Agent({ data }) {
   };
   return (
     <>
-      <TopHeader pageTitle="Recommendation Agent" subtitle="Rule-based Q&A over prepared CSV tables, designed for controlled presentation without fabricated data." />
+      <TopHeader pageTitle="AI Agent khuyến nghị" subtitle="Q&A rule-based trên các bảng CSV đã chuẩn bị, có guardrail để không bịa dữ liệu vận hành." />
       <div className="agentGrid">
-        <Card title="Decision Copilot" tag="operator console">
-          <div className="copilotHero"><Bot size={34} /><div><strong>AI Decision Copilot</strong><p>{contextRow ? `Current SKU context: ${selectedSku}` : "Type a business question and convert forecast output into an operating brief."}</p></div></div>
+        <Card title="AI Decision Copilot" tag="bảng điều hành">
+          <div className="copilotHero"><Bot size={34} /><div><strong>AI Decision Copilot</strong><p>{contextRow ? `SKU đang chọn: ${selectedSku}` : "Nhập câu hỏi nghiệp vụ để chuyển Forecast output thành brief vận hành."}</p></div></div>
           {contextRow ? (
             <div className="skuContextCard">
-              <span>Selected SKU</span>
+              <span>SKU đang chọn</span>
               <strong>{selectedSku}</strong>
-              <p>{money(contextRow.forecast_28d_revenue)} revenue | {money(contextRow.forecast_28d_profit)} profit proxy | {contextRisk?.risk_type || "Commercial priority"}</p>
+              <p>{money(contextRow.forecast_28d_revenue)} revenue | {money(contextRow.forecast_28d_profit)} profit proxy | {riskLabel[contextRisk?.risk_type] || "Ưu tiên thương mại"}</p>
             </div>
           ) : null}
-          <label className="stackLabel">Ask a question<input value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") runAnalysis(); }} placeholder={contextRow ? `Ask what logistics should do for ${selectedSku}...` : "Ask about replenishment, stockout risk, profit priority, or this week's actions..."} /></label>
-          <button className="primaryButton" onClick={runAnalysis}>Run Analysis</button>
+          <div className="promptChips" aria-label="Gợi ý nhanh cho AI Agent">
+            {quickPrompts.map((prompt) => (
+              <button type="button" key={prompt} onClick={() => { setQuestion(prompt); setSubmitted(prompt); }}>{prompt}</button>
+            ))}
+          </div>
+          <label className="stackLabel">Nhập câu hỏi<input value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") runAnalysis(); }} placeholder={contextRow ? `Hỏi logistics nên làm gì với ${selectedSku}...` : "Hỏi về replenishment, stockout risk, profit priority hoặc hành động tuần này..."} /></label>
+          <button className="primaryButton" onClick={runAnalysis}>Chạy phân tích</button>
           <div className="smallMetricRow">
             <ScopeMetric label="Forecast revenue" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_revenue, 0))} />
             <ScopeMetric label="Profit proxy" value={shortMoney(summary.reduce((s, r) => s + r.forecast_28d_profit, 0))} />
           </div>
         </Card>
-        <Card title={submitted ? "Answer / Recommendation Result" : "Ready to run analysis"} tag={submitted ? "decision brief" : "empty state"}>
+        <Card title={submitted ? "Kết quả khuyến nghị" : "Sẵn sàng phân tích"} tag={submitted ? "decision brief" : "chưa có câu hỏi"}>
           {!submitted ? (
-            <div className="emptyState"><Bot size={46} /><strong>Ready to run analysis</strong><p>Type a question and run analysis. The response will be framed as an operating brief.</p></div>
+            <div className="emptyState"><Bot size={46} /><strong>Sẵn sàng tạo operating brief</strong><p>Nhập câu hỏi rồi chạy phân tích. Agent sẽ trả lời theo dạng brief vận hành.</p></div>
           ) : (
             <div className="answerPane">
               <div className="questionBubble">{submitted}</div>
@@ -1331,6 +1542,84 @@ const normalizeQuery = (value) =>
 
 const hasAny = (text, words) => words.some((word) => text.includes(word));
 
+function isVietnameseQuestion(value) {
+  const raw = String(value || "").toLowerCase();
+  const normalized = normalizeQuery(raw);
+  return /[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(raw)
+    || hasAny(normalized, ["sku nao", "thieu hang", "nhap gap", "quan ly", "ke hoach", "doanh thu", "loi nhuan", "rui ro", "ton kho", "du hang", "tom tat", "cuu", "kich ban", "nguon du lieu"]);
+}
+
+function localizeAgentAnswer(answer, question) {
+  if (!answer) return answer;
+  const actionMap = {
+    "Review these SKUs first": "Rà soát các SKU này trước",
+    "Confirm available stock": "Xác nhận tồn kho thực tế",
+    "Prioritize supplier follow-up": "Ưu tiên làm việc với supplier",
+    "Open Replenishment Planner": "Mở Planner nhập hàng",
+    "Approve or defer each item": "Duyệt hoặc tạm hoãn từng action item",
+    "Validate real stock before purchase": "Xác thực tồn kho thật trước khi mua",
+    "Open Scenario Simulator": "Mở Scenario Simulator",
+    "Stress-test supplier delay": "Stress test supplier delay",
+    "Review SKUs newly exposed by lead time": "Rà soát SKU mới bị ảnh hưởng bởi lead time",
+    "Open Stockout Rescue Room": "Mở Stockout Rescue Room",
+    "Validate substitute compatibility": "Kiểm tra khả năng thay thế linh kiện",
+    "Confirm branch stock and supplier lead time": "Xác nhận tồn kho chi nhánh và supplier lead time",
+    "Use as decision support": "Dùng như decision support",
+    "Do not claim live ERP integration": "Không trình bày như tích hợp ERP live",
+    "Approve high-urgency replenishment review": "Duyệt review nhập hàng ưu tiên cao",
+    "Watch overstock SKUs for promotion or PO slowdown": "Theo dõi SKU overstock để promotion hoặc giảm PO",
+    "Assign planner review": "Giao planner review",
+    "Check recent sales context": "Kiểm tra sales context gần đây",
+    "Confirm real stock and supplier coverage": "Xác nhận tồn kho thật và supplier coverage",
+    "Review purchase slowdown": "Rà soát giảm tốc PO",
+    "Validate replenishment coverage": "Xác thực replenishment coverage",
+    "Confirm supplier availability": "Xác nhận khả năng đáp ứng của supplier",
+    "Monitor demand change vs last 28D": "Theo dõi demand change so với 28D gần nhất",
+    "Stress-test supplier coverage": "Stress test supplier coverage",
+    "Reserve purchase capacity for highest exposure": "Dành purchase capacity cho SKU phơi nhiễm cao nhất",
+    "Escalate SKUs with large suggested orders": "Escalate SKU có suggested order lớn",
+    "Slow purchase orders": "Giảm tốc PO",
+    "Review promotion or bundling": "Rà soát promotion hoặc bundling",
+    "Monitor demand before replenishment": "Theo dõi demand trước khi replenishment",
+    "Protect availability": "Bảo vệ availability",
+    "Review supplier coverage": "Rà soát supplier coverage",
+    "Prioritize high-margin SKUs": "Ưu tiên SKU margin cao",
+    "Protect availability for high revenue SKUs": "Bảo vệ availability cho SKU revenue cao",
+    "Check pricing and margin before final priority": "Kiểm tra pricing và margin trước khi chốt ưu tiên",
+    "Coordinate sales and logistics follow-up": "Phối hợp sales và logistics follow-up",
+    "Review demand drivers": "Rà soát demand drivers",
+    "Validate abnormal movement with sales team": "Xác thực biến động bất thường với sales team",
+    "Use SKU drilldown before final order decision": "Dùng SKU drilldown trước khi chốt order",
+    "Prioritize replenishment": "Ưu tiên replenishment",
+    "Escalate high-exposure SKUs": "Escalate SKU phơi nhiễm cao",
+    "Prepare replenishment review": "Chuẩn bị replenishment review",
+    "Escalate critical SKUs": "Escalate SKU critical",
+  };
+  const localized = {
+    ...answer,
+    intent: {
+      "Top SKU operating priority": "Ưu tiên vận hành SKU",
+      "Executive operating summary": "Tóm tắt điều hành",
+      "Scenario comparison action mode": "So sánh Scenario",
+      "Stockout rescue action mode": "Kế hoạch rescue stockout",
+      "Replenishment action plan": "Kế hoạch nhập hàng",
+      "Data governance and demo guardrail": "Quản trị dữ liệu và guardrail demo",
+      "Manual review queue": "Hàng đợi manual review",
+      "SKU risk explanation": "Giải thích risk cấp SKU",
+      "Single-SKU decision brief": "Decision brief cấp SKU",
+      "Overstock containment brief": "Brief kiểm soát overstock",
+      "Commercial profit priority": "Ưu tiên theo profit",
+      "Revenue impact priority": "Ưu tiên theo revenue impact",
+      "Demand movement monitor": "Theo dõi demand movement",
+      "Budget-constrained replenishment queue": "Hàng đợi replenishment theo giới hạn budget",
+      "Stockout-risk replenishment queue": "Hàng đợi replenishment theo stockout risk",
+      "Default operating brief": "Operating brief mặc định",
+    }[answer.intent] || answer.intent,
+    actions: answer.actions?.map((action) => actionMap[action] || action) || [],
+  };
+  return localized;
+}
+
 const topBy = (rows, key, limit = 10) =>
   [...rows].sort((a, b) => Number(b[key] || 0) - Number(a[key] || 0)).slice(0, limit);
 
@@ -1345,45 +1634,45 @@ function leadTimeFromQuestion(text) {
 function riskColumns({ includeOrder = false } = {}) {
   return [
     { key: "sku_id", label: "SKU" },
-    { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
-    { key: "risk_type", label: "Alert Group", render: (v) => <RiskBadge type={v} /> },
+    { key: "severity", label: "Mức ưu tiên", render: (_, row) => <SeverityBadge row={row} /> },
+    { key: "risk_type", label: "Nhóm cảnh báo", render: (v) => <RiskBadge type={v} /> },
     { key: "risk_score", label: "Risk Score", render: (v) => number(v, 1) },
-    { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
-    ...(includeOrder ? [{ key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) }] : []),
+    { key: "forecast_28d_qty", label: "Demand 28D", render: (v) => number(v, 1) },
+    ...(includeOrder ? [{ key: "suggested_order_qty", label: "Suggested order", render: (v) => number(v, 1) }] : []),
     { key: "revenue_at_risk_proxy", label: "Revenue at Risk", render: money },
     { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
-    { key: "recommended_action", label: "Recommendation", render: (v) => actionLabel[v] || v },
+    { key: "recommended_action", label: "Khuyến nghị", render: (v) => actionLabel[v] || v },
   ];
 }
 
 const commercialColumns = [
   { key: "sku_id", label: "SKU" },
-  { key: "forecast_28d_qty", label: "28D Demand", render: (v) => number(v, 1) },
+  { key: "forecast_28d_qty", label: "Demand 28D", render: (v) => number(v, 1) },
   { key: "demand_change_pct", label: "Demand Change", render: (v) => `${number(v, 1)}%` },
   { key: "forecast_28d_revenue", label: "Revenue", render: money },
   { key: "forecast_28d_profit", label: "Profit Proxy", render: money },
-  { key: "recommended_action", label: "Recommendation", render: (v) => actionLabel[v] || v },
+  { key: "recommended_action", label: "Khuyến nghị", render: (v) => actionLabel[v] || v },
 ];
 
 const dataGovernanceColumns = [
   { key: "asset", label: "Data Asset" },
-  { key: "role", label: "Role in Demo" },
+  { key: "role", label: "Vai trò trong demo" },
   { key: "guardrail", label: "Guardrail" },
 ];
 
 const plannerColumns = [
   { key: "sku_id", label: "SKU" },
-  { key: "urgency", label: "Urgency", render: (value) => <span className={`urgencyBadge ${String(value).toLowerCase()}`}>{value}</span> },
-  { key: "risk_type", label: "Alert", render: (value) => <RiskBadge type={value} /> },
-  { key: "suggested_order_qty", label: "Suggested Order", render: (value) => number(value, 1) },
-  { key: "expected_stockout_date", label: "Expected Stockout" },
+  { key: "urgency", label: "Độ ưu tiên", render: (value) => <span className={`urgencyBadge ${String(value).toLowerCase()}`}>{urgencyLabel[value] || value}</span> },
+  { key: "risk_type", label: "Cảnh báo", render: (value) => <RiskBadge type={value} /> },
+  { key: "suggested_order_qty", label: "Suggested order", render: (value) => number(value, 1) },
+  { key: "expected_stockout_date", label: "Stockout dự kiến" },
   { key: "business_impact", label: "Profit Protected", render: money },
   { key: "owner", label: "Owner" },
-  { key: "reason", label: "Reason" },
+  { key: "reason", label: "Lý do" },
 ];
 
 const scenarioComparisonColumns = [
-  { key: "name", label: "Scenario" },
+  { key: "name", label: "Scenario", render: (value) => scenarioNameLabel[value] || value },
   { key: "lead_time", label: "Lead Time", render: (value) => `${value}D` },
   { key: "demand_uplift", label: "Demand Uplift", render: (value) => `${value > 0 ? "+" : ""}${value}%` },
   { key: "stockout_count", label: "Stockout SKUs", render: (value) => number(value) },
@@ -1392,10 +1681,10 @@ const scenarioComparisonColumns = [
 ];
 
 const rescueActionColumns = [
-  { key: "rank", label: "Rank", render: (value) => number(value) },
+  { key: "rank", label: "Hạng", render: (value) => number(value) },
   { key: "sku_id", label: "SKU" },
-  { key: "action", label: "Rescue Action" },
-  { key: "cost", label: "Cost", render: money },
+  { key: "action", label: "Rescue action" },
+  { key: "cost", label: "Chi phí", render: money },
   { key: "revenue_protected", label: "Revenue Protected", render: money },
   { key: "decision_score", label: "Score", render: (value) => number(value) },
 ];
@@ -1432,20 +1721,20 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
   if (asksDataGuardrail) {
     return {
       intent: "Data governance and demo guardrail",
-      summary: "This demo is not a real-time ERP/WMS screen. It reads prepared forecast and risk tables, then turns them into decision-support recommendations for the next 28 days.",
+      summary: "Demo này không phải màn hình ERP/WMS real-time. Ứng dụng đọc các bảng Forecast và risk đã chuẩn bị, sau đó chuyển thành khuyến nghị decision support cho 28 ngày tới.",
       metrics: [
         { label: "Forecast horizon", value: "28D" },
-        { label: "Managed SKUs", value: number(summary.length) },
-        { label: "Risk records", value: number(risk.length) },
+        { label: "SKU đang quản lý", value: number(summary.length) },
+        { label: "Dòng risk", value: number(risk.length) },
       ],
-      actions: ["Use as decision support", "Validate real stock before purchase", "Do not claim live ERP integration"],
+      actions: ["Dùng như decision support", "Xác thực tồn kho thật trước khi mua", "Không trình bày như tích hợp ERP live"],
       rows: [
-        { asset: "sku_forecast_summary.csv", role: "SKU-level demand, revenue, profit proxy, and demand change", guardrail: "Forecast output, not live sales feed" },
-        { asset: "sku_risk_table.csv", role: "Stockout/overstock ranking and recommended actions", guardrail: "Inventory and lead time are scenario assumptions" },
-        { asset: "forecast_long.csv", role: "Daily 28-day forecast curve for charting", guardrail: "Precomputed batch forecast" },
+        { asset: "sku_forecast_summary.csv", role: "Demand, revenue, profit proxy và demand change ở cấp SKU", guardrail: "Forecast output, không phải live sales feed" },
+        { asset: "sku_risk_table.csv", role: "Xếp hạng stockout/overstock và recommended actions", guardrail: "Inventory và lead time là giả định scenario" },
+        { asset: "forecast_long.csv", role: "Đường Forecast 28 ngày theo ngày để vẽ chart", guardrail: "Precomputed batch Forecast" },
       ],
       columns: dataGovernanceColumns,
-      note: "Decision note: the agent can explain and rank what is loaded in the CSV tables; it should not invent live inventory, supplier commitments, or purchase orders.",
+      note: "Decision note: agent chỉ giải thích và xếp hạng dữ liệu đã nạp trong CSV; không bịa live inventory, supplier commitment hoặc purchase order.",
     };
   }
 
@@ -1455,16 +1744,16 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     const overstock = risk.filter((row) => row.risk_type === "Overstock risk");
     return {
       intent: "Executive operating summary",
-      summary: `Next 28 days: ${number(summary.length)} managed SKUs, ${number(stockout.length)} stockout-risk SKUs, and ${number(overstock.length)} overstock-risk SKUs. The recommended management focus is protecting high-profit stockout exposure while slowing purchase orders for overstock signals.`,
+      summary: `Trong 28 ngày tới: ${number(summary.length)} SKU đang quản lý, ${number(stockout.length)} SKU có stockout risk và ${number(overstock.length)} SKU có overstock risk. Trọng tâm quản lý nên là bảo vệ nhóm stockout có profit exposure cao, đồng thời giảm tốc PO cho tín hiệu overstock.`,
       metrics: [
-        { label: "28D Demand", value: number(summary.reduce((sum, row) => sum + Number(row.forecast_28d_qty || 0), 0), 1) },
+        { label: "Demand 28D", value: number(summary.reduce((sum, row) => sum + Number(row.forecast_28d_qty || 0), 0), 1) },
         { label: "Revenue Proxy", value: shortMoney(summary.reduce((sum, row) => sum + Number(row.forecast_28d_revenue || 0), 0)) },
         { label: "Action Items", value: number(actionRows.length) },
       ],
-      actions: ["Approve high-urgency replenishment review", "Validate real stock before purchase", "Watch overstock SKUs for promotion or PO slowdown"],
+      actions: ["Duyệt review nhập hàng ưu tiên cao", "Xác thực tồn kho thật trước khi mua", "Theo dõi SKU overstock để promotion hoặc giảm PO"],
       rows: actionRows,
       columns: plannerColumns,
-      note: "Executive brief is generated from prepared forecast and risk tables; inventory remains a scenario assumption.",
+      note: "Executive brief được tạo từ Forecast và risk table đã chuẩn bị; inventory vẫn là giả định scenario.",
     };
   }
 
@@ -1474,16 +1763,16 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     const baseline = rows[0];
     return {
       intent: "Scenario comparison action mode",
-      summary: `Supplier Delay versus Baseline changes stockout-risk SKUs by ${number((supplierDelay?.stockout_count || 0) - (baseline?.stockout_count || 0))} and revenue at risk by ${money((supplierDelay?.revenue_at_risk || 0) - (baseline?.revenue_at_risk || 0))}.`,
+      summary: `Supplier Delay so với Baseline làm thay đổi ${number((supplierDelay?.stockout_count || 0) - (baseline?.stockout_count || 0))} SKU stockout risk và làm revenue at risk thay đổi ${money((supplierDelay?.revenue_at_risk || 0) - (baseline?.revenue_at_risk || 0))}.`,
       metrics: [
         { label: "Baseline revenue risk", value: shortMoney(baseline?.revenue_at_risk || 0) },
         { label: "Supplier delay risk", value: shortMoney(supplierDelay?.revenue_at_risk || 0) },
         { label: "Revenue delta", value: shortMoney((supplierDelay?.revenue_at_risk || 0) - (baseline?.revenue_at_risk || 0)) },
       ],
-      actions: ["Open Scenario Simulator", "Stress-test supplier delay", "Review SKUs newly exposed by lead time"],
+      actions: ["Mở Scenario Simulator", "Stress test supplier delay", "Rà soát SKU mới bị ảnh hưởng bởi lead time"],
       rows,
       columns: scenarioComparisonColumns,
-      note: "Scenario comparison is rule-based and uses assumed lead time, safety stock, and forecast demand.",
+      note: "Scenario comparison là rule-based và dùng giả định lead time, safety stock, Forecast demand.",
     };
   }
 
@@ -1493,16 +1782,16 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     const plan = buildRescuePlan(targetRow, summary);
     return {
       intent: "Stockout rescue action mode",
-      summary: `${targetSku} rescue plan: protect ${money(plan.impact.directRevenue)} direct revenue and ${money(plan.impact.bundleRevenue)} bundle revenue by combining transfer, substitute, and supplier expedite actions.`,
+      summary: `${targetSku} cần rescue plan: bảo vệ ${money(plan.impact.directRevenue)} direct revenue và ${money(plan.impact.bundleRevenue)} bundle revenue bằng cách kết hợp branch transfer, substitute part và expedite supplier.`,
       metrics: [
-        { label: "Unfulfilled demand", value: number(plan.impact.unfulfilled, 1) },
-        { label: "Affected bundles", value: number(plan.impact.affectedBundles) },
+        { label: "Demand chưa đáp ứng", value: number(plan.impact.unfulfilled, 1) },
+        { label: "Bundle bị ảnh hưởng", value: number(plan.impact.affectedBundles) },
         { label: "Best score", value: number(plan.rescueActions[0]?.decision_score || 0) },
       ],
-      actions: ["Open Stockout Rescue Room", "Validate substitute compatibility", "Confirm branch stock and supplier lead time"],
+      actions: ["Mở Stockout Rescue Room", "Kiểm tra khả năng substitute", "Xác nhận branch stock và supplier lead time"],
       rows: plan.rescueActions,
       columns: rescueActionColumns,
-      note: "Rescue options are scenario assumptions. Validate substitute, branch stock, and supplier commitment before execution.",
+      note: "Rescue options là giả định scenario. Cần xác thực substitute, branch stock và supplier commitment trước khi triển khai.",
     };
   }
 
@@ -1510,16 +1799,16 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     const rows = buildPlannerRows(summary, risk, 10);
     return {
       intent: "Replenishment action plan",
-      summary: "I created a prioritized replenishment action plan from forecast risk, suggested order quantity, expected stockout timing, and profit exposure.",
+      summary: "Agent đã tạo kế hoạch replenishment theo thứ tự ưu tiên từ Forecast risk, suggested order quantity, thời điểm stockout dự kiến và profit exposure.",
       metrics: [
-        { label: "High urgency", value: number(rows.filter((row) => row.urgency === "High").length) },
+        { label: "Ưu tiên cao", value: number(rows.filter((row) => row.urgency === "High").length) },
         { label: "Suggested order qty", value: number(rows.reduce((sum, row) => sum + Number(row.suggested_order_qty || 0), 0), 1) },
         { label: "Profit protected", value: shortMoney(rows.reduce((sum, row) => sum + Number(row.business_impact || 0), 0)) },
       ],
-      actions: ["Open Replenishment Planner", "Approve or defer each item", "Validate real stock before purchase"],
+      actions: ["Mở Planner nhập hàng", "Duyệt hoặc tạm hoãn từng action item", "Xác thực tồn kho thật trước khi mua"],
       rows,
       columns: plannerColumns,
-      note: "This plan is decision support. Final purchase approval remains with the responsible owner.",
+      note: "Kế hoạch này là decision support. Phê duyệt mua cuối cùng vẫn thuộc owner phụ trách.",
     };
   }
 
@@ -1529,15 +1818,15 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
       .slice(0, 10);
     return {
       intent: "Manual review queue",
-      summary: "These SKUs should be reviewed manually because their action signal is meaningful but the demand movement or risk confidence deserves a planner check before approval.",
+      summary: "Các SKU này nên được manual review vì tín hiệu hành động đủ đáng chú ý, nhưng demand movement hoặc độ tin cậy risk cần planner kiểm tra trước khi duyệt.",
       metrics: [
         { label: "Review SKUs", value: number(rows.length) },
         { label: "Profit exposure", value: shortMoney(rows.reduce((sum, row) => sum + Number(row.business_impact || 0), 0)) },
       ],
-      actions: ["Assign planner review", "Check recent sales context", "Confirm real stock and supplier coverage"],
+      actions: ["Giao planner review", "Kiểm tra sales context gần đây", "Xác nhận tồn kho thật và supplier coverage"],
       rows,
       columns: plannerColumns,
-      note: "Manual review is a conservative workflow layer, not a model retraining signal.",
+      note: "Manual review là một lớp workflow thận trọng, không phải tín hiệu retrain model.",
     };
   }
 
@@ -1545,16 +1834,16 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     const rows = topBy(stockoutRows, "profit_at_risk_proxy", 10);
     return {
       intent: "Top SKU operating priority",
-      summary: "Here are the top SKUs to review first. I rank them by stockout exposure and profit-at-risk proxy, so the list is useful for replenishment prioritization rather than just raw forecast volume.",
+      summary: "Đây là các SKU nên review trước. Danh sách được xếp theo stockout exposure và profit-at-risk proxy, nên phù hợp để ưu tiên replenishment thay vì chỉ nhìn Forecast volume.",
       metrics: [
         { label: "Stockout SKUs", value: number(stockoutRows.length) },
         { label: "Top 10 profit at risk", value: shortMoney(rows.reduce((s, row) => s + Number(row.profit_at_risk_proxy || 0), 0)) },
         { label: "Top 10 order qty", value: number(rows.reduce((s, row) => s + Number(row.suggested_order_qty || 0), 0), 1) },
       ],
-      actions: ["Review these SKUs first", "Confirm available stock", "Prioritize supplier follow-up"],
+      actions: ["Rà soát các SKU này trước", "Xác nhận tồn kho thực tế", "Ưu tiên làm việc với supplier"],
       rows,
       columns: riskColumns({ includeOrder: true }),
-      note: "If you want a different definition, ask for top SKU by revenue, profit, demand, stockout risk, or overstock risk.",
+      note: "Có thể hỏi thêm top SKU theo revenue, profit, demand, stockout risk hoặc overstock risk.",
     };
   }
 
@@ -1571,21 +1860,21 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     return {
       intent: asksExplain ? "SKU risk explanation" : "Single-SKU decision brief",
       summary: asksExplain
-        ? `${skuInQuestion} is risky because ${drivers.filter((driver) => driver.points > 0).slice(0, 3).map((driver) => driver.label.toLowerCase()).join(", ")}. The item has ${money(skuSummary.forecast_28d_profit)} profit proxy and ${number(briefRow.suggested_order_qty || 0, 1)} suggested order quantity.`
-        : `${skuInQuestion} is forecast at ${number(skuSummary.forecast_28d_qty, 1)} units over the next 28 days, ${trend} ${number(Math.abs(skuSummary.demand_change_pct || 0), 1)}% versus the last 28 days. Estimated revenue is ${money(skuSummary.forecast_28d_revenue)} with ${money(skuSummary.forecast_28d_profit)} profit proxy.`,
+        ? `${skuInQuestion} rủi ro vì ${drivers.filter((driver) => driver.points > 0).slice(0, 3).map((driver) => driver.label.toLowerCase()).join(", ")}. SKU này có ${money(skuSummary.forecast_28d_profit)} profit proxy và suggested order quantity ${number(briefRow.suggested_order_qty || 0, 1)}.`
+        : `${skuInQuestion} được Forecast ${number(skuSummary.forecast_28d_qty, 1)} units trong 28 ngày tới, ${trend === "up" ? "tăng" : "giảm"} ${number(Math.abs(skuSummary.demand_change_pct || 0), 1)}% so với 28 ngày gần nhất. Revenue ước tính ${money(skuSummary.forecast_28d_revenue)}, profit proxy ${money(skuSummary.forecast_28d_profit)}.`,
       metrics: [
-        { label: "Last 28D actual", value: number(skuSummary.last_28d_qty, 1) },
-        { label: "28D forecast", value: number(skuSummary.forecast_28d_qty, 1) },
+        { label: "Actual 28D gần nhất", value: number(skuSummary.last_28d_qty, 1) },
+        { label: "Forecast 28D", value: number(skuSummary.forecast_28d_qty, 1) },
         { label: "Suggested order", value: number(briefRow.suggested_order_qty || 0, 1) },
       ],
       actions: [
-        briefRow.risk_type === "Overstock risk" ? "Review purchase slowdown" : "Validate replenishment coverage",
-        "Confirm supplier availability",
-        "Monitor demand change vs last 28D",
+        briefRow.risk_type === "Overstock risk" ? "Rà soát giảm tốc PO" : "Xác thực replenishment coverage",
+        "Xác nhận khả năng đáp ứng của supplier",
+        "Theo dõi demand change so với 28D gần nhất",
       ],
       rows: [briefRow],
       columns: riskColumns({ includeOrder: true }),
-      note: "This is a recommendation brief. Purchase approval still belongs to the responsible planner or manager.",
+      note: "Đây là recommendation brief. Phê duyệt mua cuối cùng vẫn thuộc planner hoặc manager phụ trách.",
     };
   }
 
@@ -1596,17 +1885,17 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
       .sort((a, b) => Number(b.profit_at_risk_proxy || 0) - Number(a.profit_at_risk_proxy || 0))
       .slice(0, 10);
     return {
-      intent: `Lead-time stress test (${lead} days)`,
-      summary: `If lead time is modeled at ${lead} days, these SKUs become the priority replenishment queue because forecast coverage and assumed stock create the highest stockout exposure.`,
+      intent: `Lead-time stress test (${lead} ngày)`,
+      summary: `Nếu lead time được mô phỏng ở mức ${lead} ngày, các SKU này trở thành hàng đợi replenishment ưu tiên vì Forecast coverage và tồn kho giả định tạo stockout exposure cao nhất.`,
       metrics: [
         { label: "Lead time", value: `${lead}D` },
         { label: "Stockout-risk SKUs", value: number(rows.length) },
         { label: "Profit at risk", value: shortMoney(rows.reduce((s, row) => s + Number(row.profit_at_risk_proxy || 0), 0)) },
       ],
-      actions: ["Stress-test supplier coverage", "Reserve purchase capacity for highest exposure", "Escalate SKUs with large suggested orders"],
+      actions: ["Stress test supplier coverage", "Dành purchase capacity cho SKU phơi nhiễm cao nhất", "Escalate SKU có suggested order lớn"],
       rows,
       columns: riskColumns({ includeOrder: true }),
-      note: "Lead time is a scenario assumption in this demo, not a live supplier SLA.",
+      note: "Lead time là giả định scenario trong demo, không phải supplier SLA live.",
     };
   }
 
@@ -1615,16 +1904,16 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     return {
       intent: "Overstock containment brief",
       summary: rows.length
-        ? "These SKUs show the strongest overstock signals. The operating move is to slow purchasing, review bundles or promotions, and avoid tying cash in slow-moving inventory."
-        : "No material overstock-risk SKU is currently flagged in the loaded risk table.",
+        ? "Các SKU này có tín hiệu overstock mạnh nhất. Hướng vận hành là giảm tốc mua hàng, rà soát bundle/promotion và tránh khóa vốn ở inventory quay chậm."
+        : "Risk table hiện tại chưa gắn cờ SKU overstock đáng kể.",
       metrics: [
         { label: "Overstock SKUs", value: number(overstockRows.length) },
         { label: "Highest score", value: rows[0] ? number(rows[0].risk_score, 1) : "0.0" },
       ],
-      actions: ["Slow purchase orders", "Review promotion or bundling", "Monitor demand before replenishment"],
+      actions: ["Giảm tốc PO", "Rà soát promotion hoặc bundling", "Theo dõi demand trước khi replenishment"],
       rows,
       columns: riskColumns(),
-      note: "Overstock is calculated from forecast demand and assumed inventory, so it is a planning signal rather than a warehouse count.",
+      note: "Overstock được tính từ Forecast demand và inventory giả định, nên đây là planning signal chứ không phải số đếm kho thật.",
     };
   }
 
@@ -1632,15 +1921,15 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     const rows = topBy(summary, "forecast_28d_profit", 10);
     return {
       intent: "Commercial profit priority",
-      summary: "Commercial priority brief: these SKUs carry the strongest 28-day profit proxy and should be protected first when supply or logistics capacity is constrained.",
+      summary: "Commercial priority brief: các SKU này có profit proxy 28 ngày cao nhất và nên được bảo vệ trước khi supply hoặc logistics capacity bị giới hạn.",
       metrics: [
         { label: "Top SKU profit", value: money(rows[0]?.forecast_28d_profit || 0) },
         { label: "Top 10 profit", value: shortMoney(rows.reduce((s, row) => s + Number(row.forecast_28d_profit || 0), 0)) },
       ],
-      actions: ["Protect availability", "Review supplier coverage", "Prioritize high-margin SKUs"],
+      actions: ["Bảo vệ availability", "Rà soát supplier coverage", "Ưu tiên SKU margin cao"],
       rows,
       columns: commercialColumns,
-      note: "Profit proxy is derived from the prepared dataset, not from a live accounting system.",
+      note: "Profit proxy được suy ra từ dataset đã chuẩn bị, không phải hệ thống kế toán live.",
     };
   }
 
@@ -1648,15 +1937,15 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     const rows = topBy(summary, "forecast_28d_revenue", 10);
     return {
       intent: "Revenue impact priority",
-      summary: "These SKUs represent the largest estimated 28-day revenue exposure. They are useful for commercial prioritization when the team needs to protect sales impact first.",
+      summary: "Các SKU này có revenue exposure 28 ngày ước tính lớn nhất. Danh sách phù hợp để ưu tiên thương mại khi team cần bảo vệ sales impact trước.",
       metrics: [
         { label: "Top SKU revenue", value: money(rows[0]?.forecast_28d_revenue || 0) },
         { label: "Top 10 revenue", value: shortMoney(rows.reduce((s, row) => s + Number(row.forecast_28d_revenue || 0), 0)) },
       ],
-      actions: ["Protect availability for high revenue SKUs", "Check pricing and margin before final priority", "Coordinate sales and logistics follow-up"],
+      actions: ["Bảo vệ availability cho SKU revenue cao", "Kiểm tra pricing và margin trước khi chốt ưu tiên", "Phối hợp sales và logistics follow-up"],
       rows,
       columns: commercialColumns,
-      note: "Revenue impact is forecast quantity multiplied by price proxy from the prepared data.",
+      note: "Revenue impact được tính từ Forecast quantity nhân price proxy trong dữ liệu đã chuẩn bị.",
     };
   }
 
@@ -1666,15 +1955,15 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
       .slice(0, 10);
     return {
       intent: "Demand movement monitor",
-      summary: "These SKUs show the largest forecast movement versus the recent 28-day actual window, so they deserve review before committing replenishment or promotion actions.",
+      summary: "Các SKU này có Forecast movement lớn nhất so với actual window 28 ngày gần nhất, nên cần review trước khi chốt replenishment hoặc promotion actions.",
       metrics: [
-        { label: "Largest increase", value: `${number(Math.max(...summary.map((row) => Number(row.demand_change_pct || 0))), 1)}%` },
-        { label: "Largest decrease", value: `${number(Math.min(...summary.map((row) => Number(row.demand_change_pct || 0))), 1)}%` },
+        { label: "Tăng mạnh nhất", value: `${number(Math.max(...summary.map((row) => Number(row.demand_change_pct || 0))), 1)}%` },
+        { label: "Giảm mạnh nhất", value: `${number(Math.min(...summary.map((row) => Number(row.demand_change_pct || 0))), 1)}%` },
       ],
-      actions: ["Review demand drivers", "Validate abnormal movement with sales team", "Use SKU drilldown before final order decision"],
+      actions: ["Rà soát demand drivers", "Xác thực biến động bất thường với sales team", "Dùng SKU drilldown trước khi chốt order"],
       rows,
       columns: commercialColumns,
-      note: "Demand change compares the 28-day forecast against the recent 28-day actual window in the prepared demo data.",
+      note: "Demand change so sánh Forecast 28 ngày với actual window 28 ngày gần nhất trong demo data đã chuẩn bị.",
     };
   }
 
@@ -1683,33 +1972,33 @@ function buildAgentAnswer(question, summary, risk, selectedSku = "") {
     return {
       intent: asksBudget ? "Budget-constrained replenishment queue" : "Stockout-risk replenishment queue",
       summary: asksBudget
-        ? "With limited replenishment budget or logistics capacity, prioritize these SKUs first because they combine stockout risk with the highest profit exposure."
-        : "These SKUs should be reviewed first for replenishment because the risk table flags meaningful stockout exposure over the next 28 days.",
+        ? "Khi replenishment budget hoặc logistics capacity bị giới hạn, hãy ưu tiên các SKU này vì chúng kết hợp stockout risk với profit exposure cao nhất."
+        : "Các SKU này nên được review trước cho replenishment vì risk table gắn cờ stockout exposure đáng kể trong 28 ngày tới.",
       metrics: [
         { label: "Stockout SKUs", value: number(stockoutRows.length) },
         { label: "Top 10 profit at risk", value: shortMoney(rows.reduce((s, row) => s + Number(row.profit_at_risk_proxy || 0), 0)) },
         { label: "Top 10 order qty", value: number(rows.reduce((s, row) => s + Number(row.suggested_order_qty || 0), 0), 1) },
       ],
-      actions: ["Prioritize replenishment", "Confirm supplier availability", "Escalate high-exposure SKUs"],
+      actions: ["Ưu tiên replenishment", "Xác nhận khả năng đáp ứng của supplier", "Escalate SKU phơi nhiễm cao"],
       rows,
       columns: riskColumns({ includeOrder: true }),
-      note: "Suggested order quantity is scenario-based and should be validated against real stock and supplier constraints.",
+      note: "Suggested order quantity dựa trên scenario và cần được xác thực với tồn kho thật cùng supplier constraints.",
     };
   }
 
   const rows = topBy(stockoutRows, "profit_at_risk_proxy", 10);
   return {
     intent: "Default operating brief",
-    summary: "Replenishment command brief: prioritize SKUs where forecast demand, risk score, and profit exposure point to meaningful stockout impact.",
+    summary: "Replenishment command brief: ưu tiên SKU có Forecast demand, risk score và profit exposure cùng chỉ ra stockout impact đáng kể.",
     metrics: [
       { label: "Stockout SKUs", value: number(stockoutRows.length) },
       { label: "Overstock SKUs", value: number(overstockRows.length) },
-      { label: "Managed SKUs", value: number(summary.length) },
+      { label: "SKU đang quản lý", value: number(summary.length) },
     ],
-    actions: ["Prepare replenishment review", "Confirm supplier availability", "Escalate critical SKUs"],
+    actions: ["Chuẩn bị replenishment review", "Xác nhận khả năng đáp ứng của supplier", "Escalate SKU critical"],
     rows,
     columns: riskColumns({ includeOrder: true }),
-    note: "I can answer questions from the loaded forecast and SKU risk tables. For live ERP, supplier, or warehouse facts, validate outside this demo.",
+    note: "Agent trả lời từ Forecast và SKU risk tables đã nạp. Với dữ kiện live ERP, supplier hoặc warehouse, cần xác thực ngoài demo.",
   };
 }
 
@@ -1736,29 +2025,65 @@ function Scenario({ data }) {
   const baselineScenario = scenarioSummary[0];
   const stressScenario = scenarioSummary.find((item) => item.name === "Supplier Delay") || scenarioSummary[1];
   const scenarioInsight = stressScenario && baselineScenario
-    ? `${stressScenario.name} creates ${number(stressScenario.stockout_count - baselineScenario.stockout_count)} additional stockout-risk SKUs and changes revenue at risk by ${money(stressScenario.revenue_at_risk - baselineScenario.revenue_at_risk)} versus baseline.`
-    : "Scenario comparison is calculated from forecast demand, lead time, safety stock, and assumed inventory.";
+    ? `${scenarioNameLabel[stressScenario.name] || stressScenario.name} tạo thêm ${number(stressScenario.stockout_count - baselineScenario.stockout_count)} SKU stockout risk và làm revenue at risk thay đổi ${money(stressScenario.revenue_at_risk - baselineScenario.revenue_at_risk)} so với baseline.`
+    : "Scenario comparison được tính từ Forecast demand, lead time, safety stock và inventory giả định.";
+  const scenarioRows = rows.filter((r) => r.risk_type !== "Healthy").sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy);
+  const activePreset = scenarioPresets.find((preset) => preset.lead === lead && preset.safety === safety && preset.uplift === uplift)?.name || "Custom";
+  const activePresetLabel = scenarioNameLabel[activePreset] || activePreset;
+  const deltaRevenue = revenueAtRisk - baseRevenueAtRisk;
+  const deltaProfit = profitAtRisk - baseProfitAtRisk;
+  const applyPreset = (preset) => {
+    setLead(preset.lead);
+    setSafety(preset.safety);
+    setUplift(preset.uplift);
+  };
+  const exportScenarioBrief = () => {
+    downloadText(
+      `scenario-${activePreset.toLowerCase().replace(/\s+/g, "-")}.txt`,
+      scenarioBriefText({ lead, safety, uplift, stockout, overstock, revenueAtRisk, profitAtRisk, deltaRevenue, deltaProfit, rows: scenarioRows })
+    );
+  };
   return (
     <>
-      <TopHeader pageTitle="Scenario Simulator" subtitle="Estimate the operational impact of lead time, safety stock, and demand uplift assumptions." />
+      <TopHeader pageTitle="Scenario Simulator" subtitle="Ước tính tác động vận hành khi thay đổi giả định lead time, safety stock và demand uplift." />
       <div className="scenarioTop">
-        <Card title="Scenario Controls" tag="operational parameters">
-          <Slider label="Lead time (days)" value={lead} setValue={setLead} min={3} max={30} />
-          <Slider label="Safety stock (days)" value={safety} setValue={setSafety} min={0} max={21} />
+        <Card title="Điều khiển Scenario" tag="tham số vận hành">
+          <div className="presetBar" aria-label="Preset Scenario">
+            {scenarioPresets.map((preset) => (
+              <button
+                type="button"
+                key={preset.name}
+                className={activePreset === preset.name ? "active" : ""}
+                onClick={() => applyPreset(preset)}
+              >
+                {scenarioNameLabel[preset.name] || preset.name}
+              </button>
+            ))}
+          </div>
+          <Slider label="Lead time (ngày)" value={lead} setValue={setLead} min={3} max={30} />
+          <Slider label="Safety stock (ngày)" value={safety} setValue={setSafety} min={0} max={21} />
           <Slider label="Demand uplift (%)" value={uplift} setValue={setUplift} min={-30} max={50} />
           <div className="scenarioNote">
-            <strong>Assumption note</strong>
-            <span>Reorder points are recalculated from forecast demand, lead time, and safety stock. Inventory remains a demo assumption; no purchase order is created.</span>
+            <strong>Ghi chú giả định</strong>
+            <span>Reorder point được tính lại từ Forecast demand, lead time và safety stock. Inventory vẫn là giả định demo; không tạo purchase order.</span>
           </div>
+          <button type="button" className="secondaryButton" onClick={exportScenarioBrief}>Tải scenario brief</button>
         </Card>
       </div>
-      <Card title="Scenario Comparison Mode" tag="compare to baseline">
+      <Card title="So sánh Scenario" tag="so với baseline">
+        <div className={`impactBanner ${deltaRevenue > 500_000_000 ? "critical" : "steady"}`}>
+          <div>
+            <span>{activePresetLabel} scenario</span>
+            <strong>{stockout.length - baseStockout.length >= 0 ? "+" : ""}{number(stockout.length - baseStockout.length)} SKU stockout so với baseline</strong>
+          </div>
+          <p>Revenue-at-risk delta: {money(deltaRevenue)} · Profit-at-risk delta: {money(deltaProfit)}</p>
+        </div>
         <div className="scenarioInsight">
           <strong>{scenarioInsight}</strong>
-          <span>All scenarios are decision-support assumptions and do not create purchase orders.</span>
+          <span>Tất cả scenario là giả định decision support và không tạo purchase order.</span>
         </div>
         <DataTable rows={scenarioSummary} limit={scenarioSummary.length} columns={[
-          { key: "name", label: "Scenario" },
+          { key: "name", label: "Scenario", render: (value) => scenarioNameLabel[value] || value },
           { key: "lead_time", label: "Lead Time", render: (value) => `${value}D` },
           { key: "safety_stock", label: "Safety Stock", render: (value) => `${value}D` },
           { key: "demand_uplift", label: "Demand Uplift", render: (value) => `${value > 0 ? "+" : ""}${value}%` },
@@ -1769,36 +2094,36 @@ function Scenario({ data }) {
         ]} />
       </Card>
       <div className="kpiGrid four">
-        <KpiCard icon={AlertTriangle} label="Stockout-risk SKUs" value={number(stockout.length)} sub={`${stockout.length - baseStockout.length >= 0 ? "+" : ""}${number(stockout.length - baseStockout.length)} vs baseline`} tone="red" />
-        <KpiCard icon={PackageSearch} label="Overstock-risk SKUs" value={number(overstock.length)} sub={`${overstock.length - baseOverstock.length >= 0 ? "+" : ""}${number(overstock.length - baseOverstock.length)} vs baseline`} tone="purple" />
-        <KpiCard icon={DollarSign} label="Revenue at Risk" value={money(revenueAtRisk)} sub={`${money(revenueAtRisk - baseRevenueAtRisk)} delta`} tone="green" />
-        <KpiCard icon={BarChart3} label="Profit Proxy at Risk" value={money(profitAtRisk)} sub={`${money(profitAtRisk - baseProfitAtRisk)} delta`} tone="amber" />
+        <KpiCard icon={AlertTriangle} label="SKU stockout risk" value={number(stockout.length)} sub={`${stockout.length - baseStockout.length >= 0 ? "+" : ""}${number(stockout.length - baseStockout.length)} vs baseline`} tone="red" />
+        <KpiCard icon={PackageSearch} label="SKU overstock risk" value={number(overstock.length)} sub={`${overstock.length - baseOverstock.length >= 0 ? "+" : ""}${number(overstock.length - baseOverstock.length)} vs baseline`} tone="purple" />
+        <KpiCard icon={DollarSign} label="Revenue at Risk" value={money(revenueAtRisk)} sub={`${money(deltaRevenue)} delta`} tone="green" />
+        <KpiCard icon={BarChart3} label="Profit Proxy at Risk" value={money(profitAtRisk)} sub={`${money(deltaProfit)} delta`} tone="amber" />
       </div>
-      <Card title="Scenario Delta View" tag="baseline: 7D lead, 7D safety">
+      <Card title="Delta của Scenario" tag="baseline: 7D lead, 7D safety">
         <div className="deltaGrid">
           <DeltaTile label="Stockout delta" value={`${stockout.length - baseStockout.length >= 0 ? "+" : ""}${number(stockout.length - baseStockout.length)}`} />
-          <DeltaTile label="Revenue at risk delta" value={money(revenueAtRisk - baseRevenueAtRisk)} />
-          <DeltaTile label="Profit at risk delta" value={money(profitAtRisk - baseProfitAtRisk)} />
-          <DeltaTile label="Newly exposed SKUs" value={number(newlyCritical.length)} />
+          <DeltaTile label="Revenue at risk delta" value={money(deltaRevenue)} />
+          <DeltaTile label="Profit at risk delta" value={money(deltaProfit)} />
+          <DeltaTile label="SKU mới bị phơi nhiễm" value={number(newlyCritical.length)} />
         </div>
         <DataTable rows={newlyCritical.length ? newlyCritical : stockout.sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy)} limit={8} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
           { key: "sku_id", label: "SKU" },
-          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
+          { key: "severity", label: "Mức ưu tiên", render: (_, row) => <SeverityBadge row={row} /> },
           { key: "risk_score", label: "Risk Score", render: (v) => number(v, 1) },
           { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
-          { key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) },
+          { key: "suggested_order_qty", label: "Suggested order", render: (v) => number(v, 1) },
         ]} />
       </Card>
-      <Card title="Scenario Result Table">
-        <DataTable rows={rows.filter((r) => r.risk_type !== "Healthy").sort((a, b) => b.profit_at_risk_proxy - a.profit_at_risk_proxy)} limit={25} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
+      <Card title="Bảng kết quả Scenario">
+        <DataTable rows={scenarioRows} limit={25} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={[
           { key: "sku_id", label: "SKU" },
-          { key: "severity", label: "Severity", render: (_, row) => <SeverityBadge row={row} /> },
-          { key: "risk_type", label: "Alert Group", render: (v) => <RiskBadge type={v} /> },
+          { key: "severity", label: "Mức ưu tiên", render: (_, row) => <SeverityBadge row={row} /> },
+          { key: "risk_type", label: "Nhóm cảnh báo", render: (v) => <RiskBadge type={v} /> },
           { key: "risk_score", label: "Risk Score", render: (v) => number(v, 1) },
           { key: "scenario_forecast_28d_qty", label: "Scenario Demand", render: (v) => number(v, 1) },
           { key: "scenario_reorder_point", label: "Reorder Point", render: (v) => number(v, 1) },
           { key: "profit_at_risk_proxy", label: "Profit at Risk", render: money },
-          { key: "suggested_order_qty", label: "Suggested Order", render: (v) => number(v, 1) },
+          { key: "suggested_order_qty", label: "Suggested order", render: (v) => number(v, 1) },
         ]} />
       </Card>
     </>
@@ -1873,14 +2198,45 @@ function buildScenarioComparison(summary, custom) {
   ];
 }
 
+const scenarioPresets = [
+  { name: "Baseline", lead: 7, safety: 7, uplift: 0 },
+  { name: "Supplier Delay", lead: 14, safety: 7, uplift: 0 },
+  { name: "Peak Demand", lead: 14, safety: 7, uplift: 20 },
+  { name: "Conservative Stock", lead: 10, safety: 14, uplift: 10 },
+];
+
+function scenarioBriefText({ lead, safety, uplift, stockout, overstock, revenueAtRisk, profitAtRisk, deltaRevenue, deltaProfit, rows }) {
+  return [
+    "Brief Stress Test Scenario",
+    "",
+    `Lead time: ${lead} ngày`,
+    `Safety stock: ${safety} ngày`,
+    `Demand uplift: ${uplift}%`,
+    `SKU stockout risk: ${stockout.length}`,
+    `SKU overstock risk: ${overstock.length}`,
+    `Revenue at risk: ${money(revenueAtRisk)}`,
+    `Profit proxy at risk: ${money(profitAtRisk)}`,
+    `Revenue delta vs baseline: ${money(deltaRevenue)}`,
+    `Profit delta vs baseline: ${money(deltaProfit)}`,
+    "",
+    "Top SKU phơi nhiễm",
+    ...rows.slice(0, 10).map((row, index) =>
+      `${index + 1}. ${row.sku_id} | ${riskLabel[row.risk_type] || row.risk_type} | score ${number(row.risk_score, 1)} | profit risk ${money(row.profit_at_risk_proxy)} | suggested order ${number(row.suggested_order_qty, 1)}`
+    ),
+    "",
+    "Guardrail: đây là scenario decision support. Cần xác thực real inventory, branch stock và supplier commitments trước khi triển khai.",
+  ].join("\n");
+}
+
 function FloatingCopilot({ data, setActive }) {
   const { summary, risk } = data;
   const [open, setOpen] = React.useState(false);
   const [question, setQuestion] = React.useState("");
   const [submitted, setSubmitted] = React.useState("");
   const [selectedSku, setSelectedSku] = React.useState(sessionStorage.getItem("selectedSku") || "");
-  const answer = React.useMemo(() => buildAgentAnswer(submitted, summary, risk, selectedSku), [submitted, summary, risk, selectedSku]);
+  const answer = React.useMemo(() => localizeAgentAnswer(buildAgentAnswer(submitted, summary, risk, selectedSku), submitted), [submitted, summary, risk, selectedSku]);
   const contextRow = summary.find((row) => row.sku_id === selectedSku);
+  const quickPrompts = ["SKU nào cần nhập gấp?", "Tạo brief cho quản lý", "Stress test supplier delay"];
 
   React.useEffect(() => {
     const syncSku = (event) => setSelectedSku(String(event.detail || sessionStorage.getItem("selectedSku") || ""));
@@ -1926,16 +2282,21 @@ function FloatingCopilot({ data, setActive }) {
             <div className="copilotAvatar"><Bot size={22} /></div>
             <div>
               <span>AI Decision Copilot</span>
-              <strong>{contextRow ? `Context: ${selectedSku}` : "Ask from forecast and risk tables"}</strong>
+              <strong>{contextRow ? `Ngữ cảnh: ${selectedSku}` : "Hỏi từ Forecast và risk tables"}</strong>
             </div>
-            <button type="button" className="iconButton" onClick={() => setOpen(false)} aria-label="Close AI copilot"><X size={18} /></button>
+            <button type="button" className="iconButton" onClick={() => setOpen(false)} aria-label="Đóng AI copilot"><X size={18} /></button>
           </div>
           <div className="copilotMessages">
             {!submitted ? (
               <div className="copilotEmpty">
                 <Bot size={38} />
-                <strong>Ready for an operating brief</strong>
-                <p>Ask about replenishment, stockout risk, profit priority, demand trend, lead time, or a selected SKU.</p>
+                <strong>Sẵn sàng tạo operating brief</strong>
+                <p>Hỏi về replenishment, stockout risk, profit priority, demand trend, lead time hoặc SKU đang chọn.</p>
+                <div className="copilotPromptChips">
+                  {quickPrompts.map((prompt) => (
+                    <button type="button" key={prompt} onClick={() => { setQuestion(prompt); setSubmitted(prompt); }}>{prompt}</button>
+                  ))}
+                </div>
               </div>
             ) : (
               <>
@@ -1952,11 +2313,11 @@ function FloatingCopilot({ data, setActive }) {
                     {answer.actions.slice(0, 3).map((item) => <em key={item}>{item}</em>)}
                   </div>
                   <div className="aiQuickActions">
-                    <button type="button" onClick={() => runQuickAction("detail")}>Open SKU Detail</button>
+                    <button type="button" onClick={() => runQuickAction("detail")}>Mở chi tiết SKU</button>
                     <button type="button" onClick={() => runQuickAction("rescue")}>Rescue SKU</button>
-                    <button type="button" onClick={() => runQuickAction("planner")}>Open Planner</button>
-                    <button type="button" onClick={() => runQuickAction("risk")}>View Risk Queue</button>
-                    <button type="button" onClick={() => runQuickAction("scenario")}>Run Scenario</button>
+                    <button type="button" onClick={() => runQuickAction("planner")}>Mở Planner</button>
+                    <button type="button" onClick={() => runQuickAction("risk")}>Xem Risk Queue</button>
+                    <button type="button" onClick={() => runQuickAction("scenario")}>Chạy Scenario</button>
                   </div>
                   <DataTable rows={answer.rows} limit={5} onRowClick={(row) => goToSkuDetail(row.sku_id)} columns={answer.columns} />
                   {answer.note ? <p className="agentNote">{answer.note}</p> : null}
@@ -1969,14 +2330,14 @@ function FloatingCopilot({ data, setActive }) {
               value={question}
               onChange={(event) => setQuestion(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Enter") run(); }}
-              placeholder={contextRow ? `Ask what to do for ${selectedSku}...` : "Ask about SKUs, stockout, profit, lead time..."}
+              placeholder={contextRow ? `Hỏi nên làm gì với ${selectedSku}...` : "Hỏi về SKU, stockout, profit, lead time..."}
             />
-            <button type="button" onClick={run} aria-label="Run AI analysis"><SendHorizontal size={18} /></button>
+            <button type="button" onClick={run} aria-label="Chạy AI analysis"><SendHorizontal size={18} /></button>
           </div>
-          <button type="button" className="workspaceLink" onClick={openWorkspace}>Open full AI workspace</button>
+          <button type="button" className="workspaceLink" onClick={openWorkspace}>Mở workspace AI đầy đủ</button>
         </div>
       ) : null}
-      <button type="button" className="copilotLauncher" onClick={() => setOpen((value) => !value)} aria-label="Open AI decision copilot">
+      <button type="button" className="copilotLauncher" onClick={() => setOpen((value) => !value)} aria-label="Mở AI decision copilot">
         <Bot size={30} />
         <span>AI</span>
       </button>
@@ -2009,15 +2370,16 @@ function App() {
   };
 
   if (data.loading) {
-    return <div className="loading"><Warehouse size={44} /><strong>Loading AutoParts Demand Intelligence...</strong><span>Preparing forecast, SKU risk, and action queue tables.</span></div>;
+    return <div className="loading"><Warehouse size={44} /><strong>Đang tải AutoParts Demand Intelligence...</strong><span>Đang chuẩn bị Forecast, SKU risk và action queue tables.</span></div>;
   }
   if (data.error) {
-    return <div className="loading error"><AlertTriangle size={44} /><strong>Data load failed</strong><span>{data.error.message}</span></div>;
+    return <div className="loading error"><AlertTriangle size={44} /><strong>Tải dữ liệu thất bại</strong><span>{data.error.message}</span></div>;
   }
 
   const page = {
     dashboard: <Dashboard data={data} />,
     engine: <ForecastEngine data={data} />,
+    ops: <ModelOps data={data} />,
     risk: <RiskMonitor data={data} />,
     planner: <ReplenishmentPlanner data={data} />,
     detail: <ForecastDetail data={data} />,
@@ -2025,13 +2387,16 @@ function App() {
     agent: <Agent data={data} />,
     scenario: <Scenario data={data} />,
   }[active];
+  const skuIds = data.summary.map((row) => String(row.sku_id).toUpperCase());
 
   return (
-    <div className="appShell">
-      <Sidebar active={active} setActive={setActive} summary={data.summary} risk={data.risk} forecast={data.forecast} />
-      <main>{page}</main>
-      <FloatingCopilot data={data} setActive={setActive} />
-    </div>
+    <SkuSearchContext.Provider value={skuIds}>
+      <div className="appShell">
+        <Sidebar active={active} setActive={setActive} summary={data.summary} risk={data.risk} forecast={data.forecast} />
+        <main>{page}</main>
+        <FloatingCopilot data={data} setActive={setActive} />
+      </div>
+    </SkuSearchContext.Provider>
   );
 }
 
